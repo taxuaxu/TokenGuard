@@ -208,6 +208,10 @@ def records(weak_sample=15):
         ["HEADER_JWK"], "embedded jwk (RSA)")
     add(_signed(secure_claims(), headers={"jwk": {"kty": "EC", "crv": "P-256", "x": "f", "y": "g"}}),
         ["HEADER_JWK"], "embedded jwk (EC)")
+    add(_signed(secure_claims(), headers={"x5c": ["MIIBder-fake-cert-chain=="]}),
+        ["HEADER_X5C"], "embedded x5c certificate chain")
+    add(_signed(secure_claims(), headers={"x5c": ["cert1==", "cert2=="]}),
+        ["HEADER_X5C"], "embedded x5c chain (two certs)")
     add(_signed(secure_claims(), headers={"jku": "https://evil.example/keys.json"}),
         ["HEADER_KEY_URL"], "jku https to attacker")
     add(_signed(secure_claims(), headers={"jku": "http://127.0.0.1:8000/jwks.json"}),

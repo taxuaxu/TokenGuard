@@ -12,8 +12,8 @@ TokenGuard analyzes JSON Web Tokens for common security problems and actively te
 
 | Group | Checks |
 |-------|--------|
-| `algorithm` | `alg=none`, missing/unknown/unexpected algorithm, empty signature, `jwk`/`jku`/`x5u`/`kid` injection headers, abused `crit` header (RFC 7515), duplicate JSON keys (parser confusion) |
-| `claims` | missing `exp`/`aud`/`iss`, expired, excessive lifetime, future `nbf`, sensitive data in payload |
+| `algorithm` | `alg=none`, missing/unknown/unexpected algorithm, empty signature, `jwk`/`x5c`/`jku`/`x5u`/`kid` injection headers, abused `crit` header (RFC 7515), duplicate JSON keys (parser confusion) |
+| `claims` | missing `exp`/`aud`/`iss`, expired, excessive lifetime, future `nbf`, sensitive data in payload (nested fields included) |
 | `weak_key` | recovers guessable HMAC secrets (HS256/384/512) from a wordlist |
 
 Each finding has a severity (INFO→CRITICAL), an explanation, masked evidence, and
@@ -27,10 +27,12 @@ attacks are accepted. The target host must be `127.0.0.1`/`localhost`.
 **MCP case study** — probes a local, OAuth 2.1-protected MCP (Model Context Protocol)
 server following the MCP authorization spec (OAuth 2.1 + RFC 9728): the 401 challenge,
 protected-resource metadata discovery, **audience binding** (a token minted for another
-resource must be rejected — the confused-deputy rule), and expiry. Ships a secure variant
-and a misconfigured one that skips audience validation.
+resource must be rejected — the confused-deputy rule), expiry, and **token pass-through**
+(a downstream call must use a token minted for the upstream, not the client's token). Ships
+a secure variant and misconfigured ones that skip audience validation or pass the client's
+token through.
 
-**Evaluation** — a labeled dataset of 146 tokens (118 insecure, 28 secure and boundary
+**Evaluation** — a labeled dataset of 148 tokens (120 insecure, 28 secure and boundary
 negatives). Coverage is derived from TokenGuard's own definitions, so the dataset exercises
 every known algorithm, every sensitive-claim key, and a balanced sample of the weak-key
 wordlist (the full wordlist via `--full-wordlist`, 223 tokens), alongside the full set of
@@ -64,13 +66,15 @@ python -m tokenguard active --target http://127.0.0.1:5000
 
 # MCP case study (run a lab MCP server in another terminal first)
 python mcp_server/server.py                 # secure,        :7000
-python mcp_server/server.py --insecure      # misconfigured, :7001
+python mcp_server/server.py --insecure      # misconfigured (no aud + pass-through), :7001
+python mcp_server/server.py --passthrough   # token pass-through only, :7001
 python -m tokenguard mcp --target http://127.0.0.1:7000
 
 # Evaluation
 python dataset/generate.py                      # balanced weak-key sample
 python dataset/generate.py --full-wordlist      # exhaustive weak-key coverage
 python evaluation/evaluate.py
+python evaluation/evaluate.py --active-target http://127.0.0.1:5000   # + active-mode accuracy
 
 # Evaluation with the jwt_tool baseline (clone ticarpi/jwt_tool first)
 #   pip install termcolor pycryptodomex requests ratelimit   # jwt_tool's deps

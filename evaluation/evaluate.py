@@ -39,8 +39,8 @@ CONFIGS = {
 
 # Rule ids the dataset labels (full TokenGuard scoring space).
 LABELED = {"ALG_NONE", "ALG_MISSING", "ALG_UNKNOWN", "ALG_UNEXPECTED", "SIGNATURE_EMPTY",
-           "HEADER_JWK", "HEADER_KEY_URL", "HEADER_KID_INJECTION", "CRIT_HEADER",
-           "DUPLICATE_KEYS",
+           "HEADER_JWK", "HEADER_X5C", "HEADER_KEY_URL", "HEADER_KID_INJECTION",
+           "CRIT_HEADER", "DUPLICATE_KEYS",
            "MISSING_EXP", "INVALID_EXP", "MISSING_AUD", "MISSING_ISS", "EXPIRED",
            "LONG_LIFETIME", "NOT_YET_VALID", "WEAK_KEY", "SENSITIVE_DATA"}
 
@@ -101,6 +101,35 @@ def per_class(records, detect_fn, label_space):
     return stats
 
 
+def score_active(detected, ground_truth):
+    """Score active-mode detection against the lab server's ground truth.
+
+    detected: {endpoint_path: [flaws]} (from summarize); ground_truth: {name: flaw|None}.
+    INCONCLUSIVE endpoints are ignored (the baseline could not be established).
+    """
+    tp = fp = fn = 0
+    fp_detail, fn_detail = [], []
+    for path, flaws in detected.items():
+        if flaws == ["INCONCLUSIVE"]:
+            continue
+        name = path.rsplit("/", 1)[-1]
+        expected = {ground_truth.get(name)} - {None}
+        got = set(flaws)
+        tp += len(expected & got)
+        extra, missed = got - expected, expected - got
+        fp += len(extra)
+        fn += len(missed)
+        if extra:
+            fp_detail.append((path, sorted(extra)))
+        if missed:
+            fn_detail.append((path, sorted(missed)))
+    precision = tp / (tp + fp) if tp + fp else 1.0
+    recall = tp / (tp + fn) if tp + fn else 1.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return {"tp": tp, "fp": fp, "fn": fn, "precision": precision, "recall": recall,
+            "f1": f1, "false_positives": fp_detail, "false_negatives": fn_detail}
+
+
 def _print_row(name, s):
     print(f"{name:<14}{s['precision']:>11.3f}{s['recall']:>9.3f}{s['f1']:>8.3f}"
           f"{s['fp']:>5}{s['fn']:>5}")
@@ -110,6 +139,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Evaluate TokenGuard (+ optional jwt_tool baseline)")
     ap.add_argument("--jwt-tool", help="path to jwt_tool.py to benchmark against")
     ap.add_argument("--python", default=sys.executable, help="interpreter used to run jwt_tool")
+    ap.add_argument("--active-target", help="score active-mode detection against a running "
+                    "lab server, e.g. http://127.0.0.1:5000")
     args = ap.parse_args(argv)
 
     records = load()
@@ -160,6 +191,29 @@ def main(argv=None):
     else:
         print("\n[baseline] jwt_tool not provided; skipping head-to-head.")
         print("           Enable with:  python evaluation/evaluate.py --jwt-tool /path/to/jwt_tool.py")
+
+    # -------- optional active-mode detection accuracy --------
+    if args.active_target:
+        from tokenguard.active.runner import HttpClient, run_active_tests, summarize
+        try:
+            client = HttpClient(args.active_target)
+            _, body = client.get("/endpoints")
+            ground_truth = body.get("_ground_truth", {})
+            detected = summarize(run_active_tests(client=client))
+            a = score_active(detected, ground_truth)
+            results["_active"] = a
+            print(f"\nActive-mode detection vs ground truth ({args.active_target}):")
+            print(f"{'':<14}{'precision':>11}{'recall':>9}{'F1':>8}{'FP':>5}{'FN':>5}")
+            print("-" * 52)
+            _print_row("active", a)
+            if a["false_positives"]:
+                print("  False positives:", a["false_positives"])
+            if a["false_negatives"]:
+                print("  False negatives:", a["false_negatives"])
+        except Exception as exc:  # noqa: BLE001
+            print(f"\n[active] could not score active mode: {exc}")
+    else:
+        print("\n[active] no --active-target; skipping active-mode accuracy.")
 
     out = Path(__file__).resolve().parent / "results.json"
     out.write_text(json.dumps(results, indent=2), encoding="utf-8")

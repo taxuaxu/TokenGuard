@@ -335,6 +335,10 @@ FIND_TR = {
         "Gömülü açık anahtar (jwk)",
         "Token kendi doğrulama anahtarını sağlıyor. Sunucu buna güvenirse, saldırgan kendi "
         "ürettiği anahtarla token imzalayabilir."),
+    "Embedded certificate chain (x5c)": (
+        "Gömülü sertifika zinciri (x5c)",
+        "Token kendi X.509 sertifika zincirini gömüyor. Sunucu güvenilir bir anahtar yerine "
+        "gömülü zincirle doğrularsa, saldırgan kendi imzaladığı bir zincir sağlayabilir."),
     "Remote key URL (jku)": (
         "Uzak anahtar URL'si (jku)",
         "'jku' başlığı doğrulayıcıyı anahtarı için bir URL'ye yönlendirir. Katı bir izin "
@@ -435,6 +439,8 @@ REMED_TR = {
     "SIGNATURE_EMPTY": "Boş olmayan bir imza iste ve doğrula; imzasız token kabul etme.",
     "HEADER_JWK": "Token'a gömülü anahtara ('jwk') asla güvenme; yalnızca güvenilir "
                   "sunucu-taraflı kaynaktan anahtar kullan.",
+    "HEADER_X5C": "Token'a gömülü sertifika zinciriyle ('x5c') doğrulama yapma; güvenilir "
+                  "sertifikaları sunucu tarafında sabitle.",
     "HEADER_KEY_URL": "Token'ın verdiği URL'lerden ('jku'/'x5u') anahtar çekme; katı bir "
                       "anahtar kaynağı izin listesi kullan.",
     "HEADER_KID_INJECTION": "'kid'i opak bir kimlik olarak ele al; sabit bir eşlemede ara, "

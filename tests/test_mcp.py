@@ -82,3 +82,23 @@ def test_misconfigured_still_challenges_and_accepts_valid():
     assert results["UNAUTH_CHALLENGE"].passed
     assert results["VALID_TOKEN_ACCEPTED"].passed
     assert results["EXPIRED_REJECTED"].passed
+
+
+# ---------------- token pass-through (RFC 9728 / confused deputy) ----------------
+
+def test_secure_does_not_pass_token_through():
+    r = _by_check(_probe(enforce=True))["TOKEN_PASSTHROUGH"]
+    assert r.passed and r.vulnerability is None
+
+
+def test_passthrough_server_is_flagged():
+    app = create_app(enforce_audience=True, issuer_base=BASE, forward_client_token=True)
+    results = run_mcp_probe(BASE, client=FlaskProbeClient(app))
+    r = _by_check(results)["TOKEN_PASSTHROUGH"]
+    assert not r.passed and r.vulnerability == "TOKEN_PASSED_THROUGH"
+    assert "TOKEN_PASSED_THROUGH" in vulnerabilities(results)
+
+
+def test_expired_rejected_always_present():
+    checks = {r.check for r in _probe(enforce=True)}
+    assert "EXPIRED_REJECTED" in checks and "TOKEN_PASSTHROUGH" in checks

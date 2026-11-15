@@ -34,6 +34,8 @@ REMEDIATION = {
     "SIGNATURE_EMPTY": "Require a non-empty signature and verify it; never accept unsigned tokens.",
     "HEADER_JWK": "Never trust a key embedded in the token ('jwk'); use keys from a trusted "
                   "server-side source only.",
+    "HEADER_X5C": "Do not verify with a certificate chain embedded in the token ('x5c'); "
+                  "pin trusted certificates server-side.",
     "HEADER_KEY_URL": "Do not fetch keys from token-supplied URLs ('jku'/'x5u'); use a strict "
                       "allow-list of key sources.",
     "HEADER_KID_INJECTION": "Treat 'kid' as an opaque identifier; look it up in a fixed map, "
@@ -80,7 +82,8 @@ def _is_number(v) -> bool:
 
 
 def _fmt_ts(ts) -> str:
-    return _dt.datetime.utcfromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return _dt.datetime.fromtimestamp(
+        float(ts), _dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 _UNITS = {"en": ("days", "hours", "minutes", "seconds"),
