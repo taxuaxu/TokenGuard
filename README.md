@@ -16,7 +16,9 @@ TokenGuard analyzes JSON Web Tokens for common security problems and actively te
 | `claims` | missing `exp`/`aud`/`iss`, expired, excessive lifetime, future `nbf`, sensitive data in payload |
 | `weak_key` | recovers guessable HMAC secrets (HS256/384/512) from a wordlist |
 
-Each finding has a severity (INFO→CRITICAL), an explanation, and masked evidence.
+Each finding has a severity (INFO→CRITICAL), an explanation, masked evidence, and
+remediation advice. A report combines an overall risk verdict, a human-readable claim
+timeline (`iat`/`nbf`/`exp` with relative time), and the findings into Markdown.
 
 **Active testing** — sends crafted tokens (`alg=none`, tampered signature, expired, wrong
 audience, weak-key forgery) to a deliberately misconfigured local server and records which
@@ -54,6 +56,7 @@ pip install -r requirements.txt
 # Static analysis
 python -m tokenguard analyze "<jwt>"
 python -m tokenguard analyze "<jwt>" --groups algorithm claims --json
+python -m tokenguard analyze "<jwt>" --report      # Markdown report (risk, timeline, fixes)
 
 # Active testing (run the lab server in another terminal first)
 python vuln_server/app.py
@@ -83,7 +86,7 @@ pytest
 ## Layout
 
 ```
-tokenguard/        package: parser, models, config, rules/, active/, mcp_probe, cli
+tokenguard/        package: parser, models, config, rules/, active/, mcp_probe, report, cli
 vuln_server/app.py deliberately misconfigured Flask server + tiny token issuer
 mcp_server/server.py local OAuth 2.1 MCP server (secure + misconfigured variants)
 dataset/generate.py labeled secure/insecure tokens (PyJWT)

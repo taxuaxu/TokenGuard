@@ -27,6 +27,11 @@ def _cmd_analyze(args) -> int:
         cfg.wordlist_path = Path(args.wordlist)
     findings = analyze(parsed, groups=args.groups, config=cfg)
 
+    if args.report:
+        from .report import report_for_cli
+        print(report_for_cli(parsed, findings, cfg))
+        return 1 if findings else 0
+
     if args.json:
         print(json.dumps({"header": parsed.header, "payload": parsed.payload,
                           "findings": [f.to_dict() for f in findings]}, indent=2))
@@ -77,6 +82,7 @@ def main(argv=None) -> int:
     a.add_argument("--expected-alg", action="append", help="allowed algorithm (repeatable)")
     a.add_argument("--wordlist", help="path to secrets wordlist")
     a.add_argument("--json", action="store_true")
+    a.add_argument("--report", action="store_true", help="print a Markdown analysis report")
     a.set_defaults(func=_cmd_analyze)
 
     t = sub.add_parser("active", help="send crafted tokens to a local test server")

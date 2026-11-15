@@ -26,6 +26,8 @@ import streamlit as st
 from tokenguard import AnalysisConfig, analyze
 from tokenguard.parser import TokenParseError, parse_token
 from tokenguard.rules import ALL_GROUPS
+from tokenguard.report import (REMEDIATION, claim_timeline, relative_phrase, risk_level,
+                               to_markdown)
 
 ROOT = Path(__file__).resolve().parent
 
@@ -278,6 +280,18 @@ STR = {
               "- **FN** — false negatives (a real problem missed).\n\n"
               "`basic` has lower recall because it misses weak keys; `all` adds weak_key for "
               "full coverage."},
+    "rb_risk_word": {"tr": "risk", "en": "risk"},
+    "rb_findings_word": {"tr": "bulgu", "en": "finding(s)"},
+    "rb_noissue": {"tr": "herhangi bir güvenlik sorunu bulunamadı",
+                   "en": "no security issues found"},
+    "st_timeline": {"tr": "Zaman çizelgesi", "en": "Timeline"},
+    "st_remediation": {"tr": "Giderme", "en": "Remediation"},
+    "st_download_report": {"tr": "Rapor indir (Markdown)", "en": "Download report (Markdown)"},
+    "tl_expired": {"tr": "süresi dolmuş", "en": "expired"},
+    "tl_valid": {"tr": "geçerli", "en": "valid"},
+    "tl_notyet": {"tr": "henüz geçerli değil", "en": "not yet valid"},
+    "tl_active": {"tr": "aktif", "en": "active"},
+    "tl_info": {"tr": "bilgi", "en": "info"},
     "lang_label": {"tr": "🌐 Dil / Language", "en": "🌐 Language / Dil"},
 }
 
@@ -410,6 +424,166 @@ def mnote(note: str) -> str:
     return NOTE_TR.get(note, note) if is_tr() else note
 
 
+# Turkish remediation advice (engine REMEDIATION stays English/canonical).
+REMED_TR = {
+    "ALG_NONE": "alg=none'u reddet; kütüphaneyi imza algoritmaları için açık bir izin "
+                "listesiyle yapılandır.",
+    "ALG_MISSING": "Açık bir 'alg' iste ve onu bir izin listesine göre doğrula.",
+    "ALG_UNKNOWN": "Yalnızca sabit bir izin listesindeki bilinen algoritmaları kabul et.",
+    "ALG_UNEXPECTED": "Uygulamanın kullandığı tam algoritma(ları) sabitle ve başkasını "
+                      "reddet (RS256→HS256 karışıklığını önler).",
+    "SIGNATURE_EMPTY": "Boş olmayan bir imza iste ve doğrula; imzasız token kabul etme.",
+    "HEADER_JWK": "Token'a gömülü anahtara ('jwk') asla güvenme; yalnızca güvenilir "
+                  "sunucu-taraflı kaynaktan anahtar kullan.",
+    "HEADER_KEY_URL": "Token'ın verdiği URL'lerden ('jku'/'x5u') anahtar çekme; katı bir "
+                      "anahtar kaynağı izin listesi kullan.",
+    "HEADER_KID_INJECTION": "'kid'i opak bir kimlik olarak ele al; sabit bir eşlemede ara, "
+                            "asla dosya yolu veya SQL sorgusunda kullanma.",
+    "CRIT_HEADER": "'crit' kötü biçimliyse, standart bir başlığa veya desteklemediğin bir "
+                   "başlığa atıf yapıyorsa token'ı reddet.",
+    "DUPLICATE_KEYS": "Header veya payload JSON'u yinelenen anahtar içeren token'ları "
+                      "reddet; katı bir parser kullan.",
+    "MISSING_EXP": "Bir 'exp' iddiası iste ve her istekte uygula.",
+    "INVALID_EXP": "'exp'in sayısal tarih (epoch'tan beri saniye) olmasını iste ve kötü "
+                   "biçimli değerleri reddet.",
+    "EXPIRED": "Süresi dolmuş token'ları reddet; 'exp'i minimum saat kayması ile şu anki "
+               "zamana göre doğrula.",
+    "LONG_LIFETIME": "Kısa ömürlü erişim token'ları (dakikalar) ver ve uzun oturumlar için "
+                     "yenileme (refresh) token'ı kullan.",
+    "MISSING_AUD": "Bir 'aud' iddiası ayarla ve doğrula; böylece token yalnızca hedef "
+                   "servisçe kabul edilir.",
+    "MISSING_ISS": "Bir 'iss' iddiası ayarla ve beklenen vericiye göre doğrula.",
+    "NOT_YET_VALID": "'nbf'i doğrula ve henüz geçerli olmayan token'ları reddet (saat "
+                     "senkronizasyonunu kontrol et).",
+    "SENSITIVE_DATA": "JWT yüküne asla sır veya kişisel veri koyma; yalnızca Base64 ile "
+                      "kodlanır, şifrelenmez.",
+    "WEAK_KEY": "Uzun, rastgele bir HMAC sırrı (≥32 bayt) kullan veya asimetrik anahtarlara "
+                "geç; sızan sırrı değiştir.",
+}
+
+REPORT_LABELS_TR = {
+    "report_title": "TokenGuard Analiz Raporu", "generated": "Oluşturulma",
+    "overall_risk": "Genel risk", "findings": "Bulgular", "token": "Token",
+    "algorithm": "Algoritma", "type": "Tür",
+    "iat": "Verilme (iat)", "nbf": "Geçerlilik başlangıcı (nbf)", "exp": "Son kullanma (exp)",
+    "header": "Başlık", "payload": "Yük", "evidence": "Kanıt", "remediation": "Giderme",
+    "no_issues": "Sorun bulunamadı.",
+    "risk_ok": "GÜVENLİ", "risk_critical": "KRİTİK", "risk_high": "YÜKSEK",
+    "risk_medium": "ORTA", "risk_low": "DÜŞÜK", "risk_info": "BİLGİ",
+}
+
+RISK_WORD = {
+    "tr": {"OK": "GÜVENLİ", "CRITICAL": "KRİTİK", "HIGH": "YÜKSEK", "MEDIUM": "ORTA",
+           "LOW": "DÜŞÜK", "INFO": "BİLGİ"},
+    "en": {"OK": "SECURE", "CRITICAL": "CRITICAL", "HIGH": "HIGH", "MEDIUM": "MEDIUM",
+           "LOW": "LOW", "INFO": "INFO"},
+}
+RISK_BANNER_COLOR = {"OK": GREEN, "CRITICAL": RED, "HIGH": RED, "MEDIUM": AMBER,
+                     "LOW": AMBER, "INFO": GREY}
+TL_STATE_KEY = {"expired": "tl_expired", "valid": "tl_valid", "not-yet-valid": "tl_notyet",
+                "active": "tl_active", "info": "tl_info"}
+TL_COLOR = {"expired": RED, "valid": GREEN, "not-yet-valid": AMBER, "active": GREEN,
+            "info": GREY}
+
+
+def report_localize(f):
+    ttl, expl, part = loc_finding(f)
+    remed = (REMED_TR.get(f.rule_id) if is_tr() else None) or REMEDIATION.get(f.rule_id, "")
+    return ttl, expl, part, remed
+
+
+def build_report(parsed, findings, now) -> str:
+    return to_markdown(parsed, findings, now,
+                       labels=REPORT_LABELS_TR if is_tr() else None,
+                       localize=report_localize, lang="tr" if is_tr() else "en")
+
+
+def render_risk_banner(findings):
+    lvl = risk_level(findings)
+    word = RISK_WORD["tr" if is_tr() else "en"][lvl]
+    if lvl == "OK":
+        st.success(f"✅ {word} — {t('rb_noissue')}")
+        return
+    msg = f"{word} {t('rb_risk_word')} — {len(findings)} {t('rb_findings_word')}"
+    fn = st.error if lvl in ("CRITICAL", "HIGH") else (
+        st.warning if lvl in ("MEDIUM", "LOW") else st.info)
+    fn(f"⚠️ {msg}")
+
+
+def render_timeline(payload, now):
+    rows = claim_timeline(payload, now)
+    if not rows:
+        return
+    st.markdown(f"**{t('st_timeline')}**")
+    lang = "tr" if is_tr() else "en"
+    for r in rows:
+        color = TL_COLOR.get(r["state"], GREY)
+        state_txt = t(TL_STATE_KEY.get(r["state"], "tl_info"))
+        label = REPORT_LABELS_TR.get(r["claim"], r["label"]) if is_tr() else r["label"]
+        rel = relative_phrase(r["claim"], r["delta"], lang)
+        st.markdown(
+            f"<span class='tg-dot' style='background:{color}'></span>"
+            f"<b>{html.escape(label)}</b> &nbsp;{r['when']} &nbsp;"
+            f"<span style='color:#8e99ab'>({html.escape(rel)})</span> &nbsp;"
+            f"<span class='tg-badge' style='background:{color}'>{state_txt}</span>",
+            unsafe_allow_html=True)
+
+
+def _active_label(r):
+    if r.status is None:
+        return "skipped"
+    if r.expected_accept:
+        return "accept" if r.accepted else "reject?"
+    return "VULN" if r.vulnerable else "rejected"
+
+
+def build_active_report(results) -> str:
+    from tokenguard.active.runner import summarize
+    tr = is_tr()
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    vuln = sum(1 for r in results if r.vulnerable)
+    out = ["# " + ("TokenGuard — Aktif Test Raporu" if tr else "TokenGuard — Active Testing Report"), ""]
+    out.append(("**Oluşturulma:** " if tr else "**Generated:** ") + now)
+    out.append(("**Zafiyetli yanıt:** " if tr else "**Vulnerable responses:** ") + str(vuln))
+    out.append("")
+    out.append("## " + ("Ham sonuçlar" if tr else "Raw results"))
+    out.append("| endpoint | attack | status | result | note |")
+    out.append("|---|---|---|---|---|")
+    for r in results:
+        out.append(f"| {r.endpoint} | {r.attack} | {r.status if r.status is not None else '-'} "
+                   f"| {_active_label(r)} | {r.note or ''} |")
+    out.append("")
+    out.append("## " + ("Endpoint başına açıklar" if tr else "Flaws per endpoint"))
+    for ep, flaws in summarize(results).items():
+        out.append(f"- **{ep}** → " + (", ".join(flaws) if flaws
+                   else ("açık yok" if tr else "no flaws")))
+    return "\n".join(out) + "\n"
+
+
+def build_eval_report(n, pos, table, pc) -> str:
+    tr = is_tr()
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    out = ["# " + ("TokenGuard — Değerlendirme Raporu" if tr else "TokenGuard — Evaluation Report"), ""]
+    out.append(("**Oluşturulma:** " if tr else "**Generated:** ") + now)
+    out.append(("**Veri kümesi:** " if tr else "**Dataset:** ")
+               + f"{n} ({pos} " + ("güvensiz, " if tr else "insecure, ")
+               + f"{n - pos} " + ("güvenli)" if tr else "secure)"))
+    out.append("")
+    out.append("## " + ("Konfigürasyonlar" if tr else "Configurations"))
+    out.append("| config | precision | recall | F1 | FP | FN |")
+    out.append("|---|---|---|---|---|---|")
+    for name, s in table.items():
+        out.append(f"| {name} | {s['precision']:.3f} | {s['recall']:.3f} | {s['F1']:.3f} "
+                   f"| {s['FP']} | {s['FN']} |")
+    out.append("")
+    out.append("## " + ("Sınıf başına (all)" if tr else "Per-class (all)"))
+    out.append("| rule_id | support | precision | recall |")
+    out.append("|---|---|---|---|")
+    for rid, s in pc.items():
+        out.append(f"| {rid} | {s['support']} | {s['precision']:.2f} | {s['recall']:.2f} |")
+    return "\n".join(out) + "\n"
+
+
 CSS = """
 <style>
 .tg-header{background:linear-gradient(100deg,#15233f 0%,#0e1117 70%);
@@ -431,6 +605,8 @@ CSS = """
 .tg-ev{font-family:ui-monospace,Menlo,monospace;background:#0b0f16;border:1px solid #222c3c;
   border-radius:7px;padding:7px 10px;margin-top:8px;color:#8fd6a6;font-size:0.82em;display:block;
   overflow-x:auto}
+.tg-fix{margin-top:8px;padding:7px 10px;background:#0f1a14;border:1px solid #1f3a2a;
+  border-radius:7px;color:#bfe6cc;font-size:0.86em;line-height:1.4}
 .tg-matrix{width:100%;border-collapse:separate;border-spacing:4px;margin-top:6px}
 .tg-matrix th{font-size:0.7rem;color:#8e99ab;font-weight:600;padding:3px 2px;text-align:center}
 .tg-matrix td{text-align:center;border-radius:7px;font-size:0.76rem;padding:7px 5px;color:#fff;
@@ -539,13 +715,15 @@ def render_findings(findings):
     severity_chart(counts)
     st.write("")
     for f in findings:
-        ttl, expl, part = loc_finding(f)
+        ttl, expl, part, remed = report_localize(f)
         ev = (f"<span class='tg-ev'>{html.escape(f.evidence)}</span>") if f.evidence else ""
+        remed_html = (f"<div class='tg-fix'>🛠 <b>{t('st_remediation')}:</b> "
+                      f"{html.escape(remed)}</div>") if remed else ""
         st.markdown(
             f"<div class='tg-finding' style='border-left:4px solid {SEV_COLOR.get(str(f.severity), GREY)}'>"
             f"<div>{badge(str(f.severity))} &nbsp;<b>{html.escape(ttl)}</b> &nbsp;"
             f"<span class='tg-rule'>{f.rule_id}</span> &nbsp;<span class='tg-part'>{html.escape(part)}</span></div>"
-            f"<div class='tg-body'>{html.escape(expl)}</div>{ev}</div>",
+            f"<div class='tg-body'>{html.escape(expl)}</div>{ev}{remed_html}</div>",
             unsafe_allow_html=True)
 
 
@@ -674,17 +852,27 @@ with tab_static:
                 max_lifetime_seconds=int(max_life_h) * 3600,
                 expected_algs=[a.strip() for a in expected.split(",") if a.strip()] or None)
             findings = analyze(parsed, groups=groups or list(ALL_GROUPS), config=cfg)
+            now = cfg.current_time()
+            render_risk_banner(findings)
             left, right = st.columns(2)
             left.caption(t("st_header")); left.json(parsed.header)
             right.caption(t("st_payload")); right.json(parsed.payload)
+            render_timeline(parsed.payload, now)
+            st.write("")
             st.subheader(t("st_findings", n=len(findings)))
             if not findings:
                 st.success(t("st_no_issues"))
             else:
                 render_findings(findings)
-                st.download_button(t("st_download_findings"),
-                                   json.dumps([f.to_dict() for f in findings], indent=2),
-                                   file_name="tokenguard_findings.json")
+            dl1, dl2 = st.columns(2)
+            dl1.download_button(t("st_download_report"),
+                                build_report(parsed, findings, now),
+                                file_name="tokenguard_report.md", use_container_width=True)
+            if findings:
+                dl2.download_button(t("st_download_findings"),
+                                    json.dumps([f.to_dict() for f in findings], indent=2),
+                                    file_name="tokenguard_findings.json",
+                                    use_container_width=True)
 
 
 # ================================================================= Active
@@ -748,9 +936,12 @@ with tab_active:
         for ep, flaws in summarize(results).items():
             icon = "🔴" if flaws else "🟢"
             st.write(f"{icon} **{ep}** → {', '.join(flaws) if flaws else t('act_no_flaws')}")
-        st.download_button(t("act_download"),
+        d1, d2 = st.columns(2)
+        d1.download_button(t("st_download_report"), build_active_report(results),
+                           file_name="tokenguard_active_report.md", use_container_width=True)
+        d2.download_button(t("act_download"),
                            json.dumps([r.to_dict() for r in results], indent=2),
-                           file_name="tokenguard_active_results.json")
+                           file_name="tokenguard_active_results.json", use_container_width=True)
 
 
 # ================================================================= MCP
@@ -806,7 +997,7 @@ with tab_eval:
     if st.button(t("ev_run"), type="primary"):
         import dataset.generate as gen
         from evaluation.evaluate import (ALL_GROUPS as EVAL_ALL, CONFIGS, LABELED, load,
-                                         score, tokenguard_ids)
+                                         per_class, score, tokenguard_ids)
         from evaluation.baselines import OVERLAP_LABELS, JwtTool
 
         gen.main([])
@@ -831,6 +1022,11 @@ with tab_eval:
                          xOffset="index:N", tooltip=["index", "metric", "score"])
                  .properties(height=260))
         st.altair_chart(chart, use_container_width=True)
+
+        pc = per_class(records, lambda rec: tokenguard_ids(rec, EVAL_ALL), LABELED)
+        st.download_button(t("st_download_report"),
+                           build_eval_report(len(records), pos, table, pc),
+                           file_name="tokenguard_eval_report.md")
 
         jt = JwtTool.locate(jwt_tool_path or None)
         if jt.available:
