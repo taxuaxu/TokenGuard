@@ -103,7 +103,17 @@ def _secure_for_alg(alg):
     return _unverified(alg, secure_claims())
 
 
-def records():
+def sample_wordlist(words, n):
+    """Deterministically pick n secrets spread evenly across the wordlist, so
+    the sample spans its categories (common passwords, JWT/framework defaults,
+    numeric and keyboard patterns) instead of clustering at the top."""
+    if not n or n >= len(words):
+        return list(words)
+    step = len(words) / n
+    return [words[int(i * step)] for i in range(n)]
+
+
+def records(weak_sample=15):
     recs = []
 
     def add(token, labels, note, expected_algs=None):
@@ -239,11 +249,12 @@ def records():
         "multiple sensitive keys at once")
 
     # ==================================================================
-    # 5. Weak HMAC keys: every secret in the wordlist (HS256) + other algs
+    # 5. Weak HMAC keys: a balanced sample of the wordlist (HS256) + other
+    #    algs. weak_sample=None emits the full wordlist (--full-wordlist).
     # ==================================================================
     wordlist = [s for s in DEFAULT_WORDLIST.read_text(encoding="utf-8",
                                                       errors="ignore").splitlines() if s.strip()]
-    for secret in wordlist:
+    for secret in sample_wordlist(wordlist, weak_sample):
         add(_signed(secure_claims(), secret=secret, alg="HS256"), ["WEAK_KEY"],
             f"weak key HS256 ({secret[:3]}...)")
     for secret in ("secret", "password", "123456", "admin", "qwerty", "changeme"):
@@ -318,13 +329,26 @@ def records():
     return recs
 
 
-def main():
-    recs = records()
+def main(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(description="Generate the labeled JWT dataset.")
+    ap.add_argument("--weak-sample", type=int, default=15, metavar="N",
+                    help="number of wordlist secrets to include as weak-key samples "
+                         "(default 15, spread across the wordlist)")
+    ap.add_argument("--full-wordlist", action="store_true",
+                    help="include a weak-key token for every secret in the wordlist "
+                         "(exhaustive; overrides --weak-sample)")
+    args = ap.parse_args(argv)
+
+    weak_sample = None if args.full_wordlist else args.weak_sample
+    recs = records(weak_sample=weak_sample)
     with OUT.open("w", encoding="utf-8") as fh:
         for r in recs:
             fh.write(json.dumps(r) + "\n")
     pos = sum(1 for r in recs if r["labels"])
-    print(f"Wrote {len(recs)} tokens to {OUT} ({pos} insecure, {len(recs) - pos} secure)")
+    weak = sum(1 for r in recs if "WEAK_KEY" in r["labels"])
+    print(f"Wrote {len(recs)} tokens to {OUT} ({pos} insecure, {len(recs) - pos} secure; "
+          f"{weak} weak-key)")
 
 
 if __name__ == "__main__":
