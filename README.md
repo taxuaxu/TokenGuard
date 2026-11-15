@@ -29,7 +29,8 @@ resource must be rejected — the confused-deputy rule), and expiry. Ships a sec
 and a misconfigured one that skips audience validation.
 
 **Evaluation** — a labeled dataset and three detection configurations (basic / basic+weak /
-all) scored with precision, recall, F1, and false-positive counts.
+all) scored with precision, recall, F1, and false-positive counts, plus an optional
+head-to-head benchmark against the external `jwt_tool` on their shared checks.
 
 ## Setup
 
@@ -59,6 +60,10 @@ python -m tokenguard mcp --target http://127.0.0.1:7000
 python dataset/generate.py
 python evaluation/evaluate.py
 
+# Evaluation with the jwt_tool baseline (clone ticarpi/jwt_tool first)
+#   pip install termcolor pycryptodomex requests ratelimit   # jwt_tool's deps
+python evaluation/evaluate.py --jwt-tool /path/to/jwt_tool.py   # or set JWT_TOOL
+
 # Web UI
 streamlit run app.py
 
@@ -74,13 +79,23 @@ vuln_server/app.py deliberately misconfigured Flask server + tiny token issuer
 mcp_server/server.py local OAuth 2.1 MCP server (secure + misconfigured variants)
 dataset/generate.py labeled secure/insecure tokens (PyJWT)
 evaluation/evaluate.py precision / recall / F1 / FP across 3 configs
+evaluation/baselines.py jwt_tool adapter (runs it, maps output to our labels)
 app.py             Streamlit UI (static + active tabs)
 wordlists/         common-secrets wordlist for weak-key detection
 tests/             pytest suite (static rules + active mode)
 ```
 
+## Results
+
+On the labeled dataset, `basic` checks reach recall 0.69 (they miss weak keys); adding
+weak-key detection brings `all` to precision/recall/F1 = 1.0 with no false positives,
+including on the intentionally short-lived secure token. On the shared checks
+(`alg=none`, expired, weak key), TokenGuard matches the `jwt_tool` baseline (both 1.0),
+while also covering claim-level issues (`aud`/`iss`/lifetime/sensitive data) that
+jwt_tool does not flag.
+
 ## Status
 
-Static analysis, active testing against the local lab server, the OAuth 2.1 MCP case
-study, the labeled dataset, and evaluation are implemented with a passing test suite
-(`pytest`). The `jwt_tool` baseline comparison is the remaining milestone.
+All proposal milestones are implemented with a passing test suite (`pytest`): static
+analysis, active testing against the local lab server, the OAuth 2.1 MCP case study, the
+labeled dataset, evaluation, and the `jwt_tool` baseline comparison.
