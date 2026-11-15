@@ -35,8 +35,10 @@ wordlist (the full wordlist via `--full-wordlist`, 223 tokens), alongside the fu
 algorithm, header-injection, and claim defects (HMAC and asymmetric, algorithm confusion,
 header soup) and systematic multi-issue combinations. It is scored under two detection
 configurations (`basic` without weak-key detection, `all` with it) on precision, recall, F1,
-and false-positive counts, plus an optional head-to-head benchmark against the external
-`jwt_tool` on their shared checks.
+and false-positive counts, with a per-class breakdown (support and precision/recall per rule)
+and an optional head-to-head benchmark against the external `jwt_tool` on their shared checks.
+The test suite revalidates every token against its labels, so a mislabeled record or a
+drifting rule fails a test instead of silently skewing the metrics.
 
 ## Setup
 
@@ -89,7 +91,7 @@ evaluation/evaluate.py precision / recall / F1 / FP across 3 configs
 evaluation/baselines.py jwt_tool adapter (runs it, maps output to our labels)
 app.py             Streamlit UI (static + active tabs)
 wordlists/         common-secrets wordlist for weak-key detection
-tests/             pytest suite (static rules + active mode)
+tests/             pytest suite (static rules, active mode, dataset integrity)
 ```
 
 ## Results
