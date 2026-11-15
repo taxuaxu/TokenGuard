@@ -364,6 +364,17 @@ FIND_TR = {
         "Zayıf HMAC imza anahtarı kurtarıldı",
         "İmza sırrı, yaygın sırlardan oluşan bir wordlist'te bulundu. Sırrı ele geçiren "
         "saldırgan istediği iddialarla geçerli token üretebilir."),
+    "Abused 'crit' header": (
+        "İstismar edilmiş 'crit' başlığı",
+        "'crit' başlığı, doğrulayıcının anlaması gereken uzantıları listeler ama burada "
+        "kötüye kullanılmış. 'crit'i yok sayan veya yanlış işleyen doğrulayıcılar, tam "
+        "işlemedikleri bir token'ı kabul etmeye kandırılabilir."),
+    "Duplicate JSON keys": (
+        "Yinelenen JSON anahtarları",
+        "JSON yinelenen anahtarlar içeriyor. JWT kütüphaneleri yinelenenleri farklı çözer "
+        "(ilk vs son kazanır); saldırgan, bir bileşenin doğruladığı ama başka bir bileşenin "
+        "farklı değerlere güvendiği tek bir token üretebilir (parser differential / iddia "
+        "kaçakçılığı)."),
 }
 
 PART_TR = {"header": "başlık", "payload": "yük", "signature": "imza"}

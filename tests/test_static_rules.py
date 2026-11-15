@@ -159,3 +159,48 @@ def test_non_string_alg_does_not_crash(bad_alg):
     found = ids(tok, groups=["algorithm", "claims", "weak_key"])
     assert "ALG_UNKNOWN" in found
     assert "WEAK_KEY" not in found
+
+
+# ---------- crit header (RFC 7515) ----------
+
+def test_crit_names_registered_header_flagged():
+    tok = raw({"alg": "HS256", "typ": "JWT", "crit": ["alg"]}, {"sub": "x"}, sig="ZHVtbXk")
+    assert "CRIT_HEADER" in ids(tok)
+
+
+def test_crit_names_absent_header_flagged():
+    tok = raw({"alg": "HS256", "typ": "JWT", "crit": ["x-custom"]}, {"sub": "x"}, sig="ZHVtbXk")
+    assert "CRIT_HEADER" in ids(tok)
+
+
+def test_crit_malformed_flagged():
+    tok = raw({"alg": "HS256", "typ": "JWT", "crit": "x"}, {"sub": "x"}, sig="ZHVtbXk")
+    assert "CRIT_HEADER" in ids(tok)
+
+
+def test_crit_wellformed_and_present_not_flagged():
+    tok = raw({"alg": "HS256", "typ": "JWT", "crit": ["x-custom"], "x-custom": True},
+              {"sub": "x"}, sig="ZHVtbXk")
+    assert "CRIT_HEADER" not in ids(tok)
+
+
+def test_no_crit_header_not_flagged():
+    assert "CRIT_HEADER" not in ids(make())
+
+
+# ---------- duplicate JSON keys (parser confusion) ----------
+
+def test_duplicate_keys_in_payload_flagged():
+    h = b64url_encode(b'{"alg":"HS256","typ":"JWT"}')
+    p = b64url_encode(b'{"sub":"a","sub":"b"}')
+    assert "DUPLICATE_KEYS" in ids(f"{h}.{p}.ZHVtbXk")
+
+
+def test_duplicate_keys_in_header_flagged():
+    h = b64url_encode(b'{"typ":"JWT","typ":"JWT","alg":"HS256"}')
+    p = b64url_encode(b'{"sub":"x"}')
+    assert "DUPLICATE_KEYS" in ids(f"{h}.{p}.ZHVtbXk")
+
+
+def test_clean_token_has_no_duplicate_keys():
+    assert "DUPLICATE_KEYS" not in ids(make())

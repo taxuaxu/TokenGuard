@@ -12,7 +12,7 @@ TokenGuard analyzes JSON Web Tokens for common security problems and actively te
 
 | Group | Checks |
 |-------|--------|
-| `algorithm` | `alg=none`, missing/unknown/unexpected algorithm, empty signature, `jwk`/`jku`/`x5u`/`kid` injection headers |
+| `algorithm` | `alg=none`, missing/unknown/unexpected algorithm, empty signature, `jwk`/`jku`/`x5u`/`kid` injection headers, abused `crit` header (RFC 7515), duplicate JSON keys (parser confusion) |
 | `claims` | missing `exp`/`aud`/`iss`, expired, excessive lifetime, future `nbf`, sensitive data in payload |
 | `weak_key` | recovers guessable HMAC secrets (HS256/384/512) from a wordlist |
 
@@ -28,7 +28,7 @@ protected-resource metadata discovery, **audience binding** (a token minted for 
 resource must be rejected — the confused-deputy rule), and expiry. Ships a secure variant
 and a misconfigured one that skips audience validation.
 
-**Evaluation** — a labeled dataset of 139 tokens (112 insecure, 27 secure and boundary
+**Evaluation** — a labeled dataset of 146 tokens (118 insecure, 28 secure and boundary
 negatives). Coverage is derived from TokenGuard's own definitions, so the dataset exercises
 every known algorithm, every sensitive-claim key, and a balanced sample of the weak-key
 wordlist (the full wordlist via `--full-wordlist`, 223 tokens), alongside the full set of
@@ -96,7 +96,7 @@ tests/             pytest suite (static rules, active mode, dataset integrity)
 
 ## Results
 
-On the 139-token labeled dataset, `basic` checks reach recall 0.76 (they miss the weak-key
+On the 146-token labeled dataset, `basic` checks reach recall 0.78 (they miss the weak-key
 labels); adding weak-key detection brings `all` to precision/recall/F1 = 1.0 with no false
 positives, including on the intentionally short-lived, boundary, and legitimate asymmetric
 secure tokens. On the shared checks
