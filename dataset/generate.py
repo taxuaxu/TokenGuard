@@ -1,7 +1,14 @@
 """Generate a controlled, labeled dataset of secure and insecure JWTs.
 
-Each record: {"token": "...", "labels": [...], "note": "...", "now": <epoch>}
-An empty labels list marks a secure (negative) example.
+Coverage is derived from TokenGuard's own rule definitions, so the dataset
+exercises **every** known algorithm, **every** sensitive-claim key, and **every**
+secret in the weak-key wordlist, alongside the full set of algorithm,
+header-injection, and claim defects and a systematic set of multi-issue
+combinations. It also includes a broad set of secure and boundary negatives.
+
+Each record: {"token", "labels", "note", "now"[, "expected_algs"]}
+An empty labels list marks a secure (negative) example. "expected_algs" pins the
+algorithms the target application accepts (for algorithm-confusion scoring).
 
 Usage:  python dataset/generate.py            -> writes dataset/tokens.jsonl
 """
@@ -11,11 +18,17 @@ import base64
 import hashlib
 import hmac
 import json
+import sys
 import time
 import warnings
 from pathlib import Path
 
 import jwt
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tokenguard.config import DEFAULT_WORDLIST          # noqa: E402
+from tokenguard.rules.algorithm import KNOWN_ALGS       # noqa: E402
+from tokenguard.rules.claims import SENSITIVE_KEYS      # noqa: E402
 
 warnings.filterwarnings("ignore")  # suppress PyJWT short-key warnings for weak samples
 
@@ -24,12 +37,25 @@ OUT = Path(__file__).resolve().parent / "tokens.jsonl"
 ISSUER = "https://auth.lab.local"
 AUDIENCE = "tokenguard-api"
 STRONG = "k9$Vq2!xLr8#Tz4@pW7&nB1^mE6*hY3%ZaCdEf"  # 38 chars, not in wordlist
+HMAC_ALGS = {"HS256", "HS384", "HS512"}
 NOW = int(time.time())
 
+# approximate raw signature sizes per asymmetric algorithm (bytes)
+_ASYM_SIG_BYTES = {
+    "RS256": 256, "RS384": 256, "RS512": 256,
+    "PS256": 256, "PS384": 256, "PS512": 256,
+    "ES256": 64, "ES256K": 64, "ES384": 96, "ES512": 132,
+    "EdDSA": 64,
+}
 
-def _b64(obj: dict) -> str:
+
+def _b64(obj) -> str:
     return base64.urlsafe_b64encode(
         json.dumps(obj, separators=(",", ":")).encode()).rstrip(b"=").decode()
+
+
+def _dummy_sig(n: int) -> str:
+    return base64.urlsafe_b64encode(b"\xa5" * n).rstrip(b"=").decode()
 
 
 def secure_claims(**over):
@@ -39,275 +65,255 @@ def secure_claims(**over):
     return c
 
 
+def expired_claims(**over):
+    base = dict(iat=NOW - 7200, nbf=NOW - 7200, exp=NOW - 3600)
+    base.update(over)
+    return secure_claims(**base)
+
+
 def _signed(claims, secret=STRONG, alg="HS256", headers=None):
     return jwt.encode(claims, secret, algorithm=alg, headers=headers)
 
 
 def _manual_hs256(header, payload, secret=STRONG):
-    """Build an HS256 token with full control of the raw payload (e.g. a
-    malformed 'exp'), which jwt.encode would coerce or reject."""
+    """HS256 token with full control of the raw payload (e.g. a malformed
+    'exp'), which jwt.encode would coerce or reject."""
     signing_input = f"{_b64(header)}.{_b64(payload)}".encode()
     sig = base64.urlsafe_b64encode(
         hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()).rstrip(b"=").decode()
     return f"{signing_input.decode()}.{sig}"
 
 
-def _unverified(alg, claims, sig_bytes=64):
-    """Build a structurally valid token for an asymmetric algorithm with a
-    placeholder signature. TokenGuard analyzes structure without verifying the
-    signature, so a real key pair is not needed to exercise its rules."""
-    header = {"alg": alg, "typ": "JWT"}
-    sig = base64.urlsafe_b64encode(b"\xa5" * sig_bytes).rstrip(b"=").decode()
-    return f"{_b64(header)}.{_b64(claims)}.{sig}"
+def _raw(header, payload, sig="ZHVtbXk") -> str:
+    """Token with an arbitrary header and a placeholder signature. Used for
+    cases jwt.encode refuses to build (alg=none, missing/unknown/non-string
+    alg, stripped signature). TokenGuard analyzes structure, not signatures."""
+    return f"{_b64(header)}.{_b64(payload)}.{sig}"
+
+
+def _unverified(alg, claims):
+    """Structurally valid token for an asymmetric algorithm with a placeholder
+    signature (no key material needed)."""
+    return _raw({"alg": alg, "typ": "JWT"}, claims, _dummy_sig(_ASYM_SIG_BYTES.get(alg, 64)))
+
+
+def _secure_for_alg(alg):
+    if alg in HMAC_ALGS:
+        return _signed(secure_claims(), STRONG, alg)
+    return _unverified(alg, secure_claims())
 
 
 def records():
     recs = []
-    # Record the generation time with each token so the evaluator analyzes it
-    # against a fixed reference time, not the wall clock. Otherwise short-lived
-    # secure tokens (exp=NOW+60) would flip to EXPIRED when evaluated later.
+
     def add(token, labels, note, expected_algs=None):
+        # Record the generation time with each token so the evaluator analyzes
+        # it against a fixed reference, not the wall clock (keeps time-relative
+        # checks reproducible). expected_algs pins the app's accepted algorithms.
         rec = {"token": token, "labels": labels, "note": note, "now": NOW}
         if expected_algs is not None:
-            # The app pins its accepted algorithms; anything else is rejected.
             rec["expected_algs"] = expected_algs
         recs.append(rec)
 
-    # ---- secure negative examples (labels = []) ----
-    add(_signed(secure_claims()), [], "standard secure HS256")
-    add(_signed(secure_claims(), alg="HS384"), [], "secure HS384")
-    add(_signed(secure_claims(), alg="HS512"), [], "secure HS512")
+    none_hdr = {"alg": "none", "typ": "JWT"}
+    hs_hdr = {"alg": "HS256", "typ": "JWT"}
+
+    # ==================================================================
+    # 1. Secure negatives: one per known algorithm (+ boundaries/variants)
+    # ==================================================================
+    for alg in sorted(KNOWN_ALGS):
+        add(_secure_for_alg(alg), [], f"secure {alg}")
+
     add(_signed(secure_claims(exp=NOW + 60)), [],
-        "intentionally short-lived (must NOT be flagged LONG_LIFETIME)")
-    add(_signed(secure_claims(exp=NOW + 86000)), [],
-        "lifetime just under the 24h limit (boundary, must NOT be flagged)")
-    add(_signed(secure_claims(nbf=NOW - 60)), [],
-        "nbf slightly in the past (already valid, must NOT be flagged NOT_YET_VALID)")
-    add(_signed(secure_claims(role="admin")), [], "admin role but otherwise sound")
-    add(_signed(secure_claims(sub="svc", aud=["tokenguard-api", "reports-api"])), [],
-        "multi-audience, both valid")
-    add(_signed(secure_claims(sub="svc-account", role="service")), [],
-        "service account, sound")
-
-    # ---- alg=none (no signature) ----
-    none_header = {"alg": "none", "typ": "JWT"}
-    add(f"{_b64(none_header)}.{_b64(secure_claims())}.", ["ALG_NONE"], "none algorithm")
-    add(f"{_b64({'alg': 'NONE', 'typ': 'JWT'})}.{_b64(secure_claims())}.", ["ALG_NONE"],
-        "none algorithm, upper-case (case bypass attempt)")
-
-    # ---- unknown / malformed algorithm ----
-    add(f"{_b64({'alg': 'HS1', 'typ': 'JWT'})}.{_b64(secure_claims())}.ZHVtbXk",
-        ["ALG_UNKNOWN"], "unknown signing algorithm")
-
-    # ---- stripped signature (alg present, signature empty) ----
-    add(f"{_b64({'alg': 'HS256', 'typ': 'JWT'})}.{_b64(secure_claims())}.",
-        ["SIGNATURE_EMPTY"], "HS256 header but signature stripped")
-
-    # ---- key-injection headers ----
-    add(_signed(secure_claims(), headers={"jwk": {"kty": "oct", "k": "YXR0YWNrZXI"}}),
-        ["HEADER_JWK"], "embedded attacker public key (jwk)")
-    add(_signed(secure_claims(), headers={"jku": "https://evil.example/keys.json"}),
-        ["HEADER_KEY_URL"], "remote key URL (jku) to attacker host")
-    add(_signed(secure_claims(), headers={"x5u": "https://evil.example/cert.pem"}),
-        ["HEADER_KEY_URL"], "remote cert URL (x5u) to attacker host")
-    add(_signed(secure_claims(), headers={"kid": "../../../../dev/null"}),
-        ["HEADER_KID_INJECTION"], "kid path traversal")
-    add(_signed(secure_claims(), headers={"kid": "key1' OR '1'='1"}),
-        ["HEADER_KID_INJECTION"], "kid SQL injection")
-
-    # ---- not yet valid (nbf in the future) ----
-    add(_signed(secure_claims(nbf=NOW + 3600)), ["NOT_YET_VALID"], "nbf 1h in the future")
-
-    # ---- missing claims ----
-    c = secure_claims(); c.pop("exp")
-    add(_signed(c), ["MISSING_EXP"], "no exp")
-    c = secure_claims(); c.pop("aud")
-    add(_signed(c), ["MISSING_AUD"], "no aud")
-    c = secure_claims(); c.pop("iss")
-    add(_signed(c), ["MISSING_ISS"], "no iss")
-    c = secure_claims(); c.pop("aud"); c.pop("iss")
-    add(_signed(c), ["MISSING_AUD", "MISSING_ISS"], "no aud and no iss")
-
-    # ---- expired ----
-    add(_signed(secure_claims(iat=NOW - 7200, nbf=NOW - 7200, exp=NOW - 3600)),
-        ["EXPIRED"], "expired 1h ago")
-    add(_signed(secure_claims(iat=NOW - 960, nbf=NOW - 960, exp=NOW - 60)),
-        ["EXPIRED"], "expired 1m ago (fresh, 15m lifetime)")
-
-    # ---- excessive lifetime ----
-    add(_signed(secure_claims(exp=NOW + 365 * 86400)), ["LONG_LIFETIME"], "valid for a year")
-    add(_signed(secure_claims(exp=NOW + 7 * 86400)), ["LONG_LIFETIME"], "valid for a week")
-
-    # ---- weak HMAC key (HS256/384/512, various wordlist hits) ----
-    for secret in ("secret", "password", "123456", "changeme", "admin",
-                   "letmein", "qwerty", "welcome", "keyboard cat"):
-        add(_signed(secure_claims(), secret=secret), ["WEAK_KEY"],
-            f"weak key ({secret[:3]}...)")
-    add(_signed(secure_claims(), secret="password", alg="HS384"),
-        ["WEAK_KEY"], "weak key on HS384")
-    add(_signed(secure_claims(), secret="123456", alg="HS512"),
-        ["WEAK_KEY"], "weak key on HS512")
-
-    # ---- sensitive data in payload ----
-    add(_signed(secure_claims(password="s3cr3tP@ss")), ["SENSITIVE_DATA"], "password in payload")
-    add(_signed(secure_claims(api_key="AK-9c1f2e3d4b5a")), ["SENSITIVE_DATA"], "api_key in payload")
-    add(_signed(secure_claims(ssn="123-45-6789")), ["SENSITIVE_DATA"], "ssn in payload")
-    add(_signed(secure_claims(credit_card="4111111111111111")), ["SENSITIVE_DATA"],
-        "credit_card in payload")
-    add(_signed(secure_claims(private_key="-----BEGIN PRIVATE KEY-----...")),
-        ["SENSITIVE_DATA"], "private_key in payload")
-
-    # ---- combined issues ----
-    c = secure_claims(); c.pop("exp"); c.pop("aud")
-    add(f"{_b64(none_header)}.{_b64(c)}.", ["ALG_NONE", "MISSING_EXP", "MISSING_AUD"],
-        "none + missing exp + missing aud")
-    add(f"{_b64(none_header)}.{_b64(secure_claims(password='pw'))}.",
-        ["ALG_NONE", "SENSITIVE_DATA"], "none + sensitive data")
-    add(_signed(secure_claims(iat=NOW - 7200, nbf=NOW - 7200, exp=NOW - 3600), secret="password"),
-        ["EXPIRED", "WEAK_KEY"], "expired AND weak key")
-    c = secure_claims(); c.pop("aud")
-    add(_signed(c, secret="secret"), ["MISSING_AUD", "WEAK_KEY"], "missing aud AND weak key")
-    c = secure_claims(); c.pop("exp")
-    add(_signed(c, headers={"jku": "https://evil.example/keys.json"}),
-        ["HEADER_KEY_URL", "MISSING_EXP"], "jku key URL + missing exp")
-    add(_signed(secure_claims(exp=NOW + 365 * 86400, api_key="AK-xyz")),
-        ["LONG_LIFETIME", "SENSITIVE_DATA"], "long lifetime + api_key in payload")
-
-    # ======================================================================
-    # Extended set
-    # ======================================================================
-
-    # ---- more secure negatives (variety + boundaries) ----
-    add(_signed(secure_claims(jti="a1b2c3", azp="web-client", scope="read write")), [],
-        "secure with jti/azp/scope")
+        "intentionally short-lived (must NOT be LONG_LIFETIME)")
     add(_signed(secure_claims(exp=NOW + 86400)), [],
-        "lifetime exactly at the 24h limit (boundary, must NOT be flagged)")
-    add(_signed(secure_claims(aud=["tokenguard-api"])), [],
-        "single-element audience list")
+        "lifetime exactly at the 24h limit (boundary)")
+    add(_signed(secure_claims(exp=NOW + 86000)), [],
+        "lifetime just under the 24h limit (boundary)")
+    add(_signed(secure_claims(nbf=NOW - 60)), [], "nbf slightly in the past")
+    add(_signed(secure_claims(nbf=NOW)), [], "nbf exactly now")
+    add(_signed(secure_claims(aud=["tokenguard-api", "reports-api"])), [],
+        "multi-audience, both valid")
+    add(_signed(secure_claims(aud=["tokenguard-api"])), [], "single-element audience list")
+    add(_signed(secure_claims(role="admin")), [], "admin role but otherwise sound")
+    add(_signed(secure_claims(sub="svc", role="service")), [], "service account, sound")
     add(_signed(secure_claims(department="eng", email="user@lab.local",
-                              email_verified=True)), [], "secure with benign custom claims")
-    add(_signed(secure_claims(scope="reports.read"), alg="HS384"), [],
-        "secure HS384 with scope")
-    add(_signed(secure_claims(sub="svc-2", role="service", jti="svc-token-1")), [],
-        "second service account, sound")
-    add(_signed(secure_claims(iat=NOW - 120, nbf=NOW - 120)), [],
-        "issued 2m ago, still valid")
-
-    # ---- missing 'alg' header ----
-    add(f"{_b64({'typ': 'JWT'})}.{_b64(secure_claims())}.ZHVtbXk",
-        ["ALG_MISSING"], "header without an 'alg' field")
-
-    # ---- malformed 'exp' (not a NumericDate) ----
-    add(_manual_hs256({"alg": "HS256", "typ": "JWT"}, secure_claims(exp="not-a-date")),
-        ["INVALID_EXP"], "exp is a string, not a timestamp")
-    add(_manual_hs256({"alg": "HS256", "typ": "JWT"}, secure_claims(exp="1700000000")),
-        ["INVALID_EXP"], "exp is a numeric string, not a number")
-
-    # ---- more header-injection variety ----
-    add(_signed(secure_claims(), headers={"kid": "default|whoami"}),
-        ["HEADER_KID_INJECTION"], "kid command-injection characters")
-    add(_signed(secure_claims(), headers={"jku": "http://127.0.0.1:8000/jwks.json"}),
-        ["HEADER_KEY_URL"], "jku over plain http")
-    add(_signed(secure_claims(), headers={"jwk": {"kty": "RSA", "n": "0vx7...", "e": "AQAB"}}),
-        ["HEADER_JWK"], "embedded RSA jwk")
-
-    # ---- more weak keys (wordlist coverage, more algorithms) ----
-    for secret in ("dragon", "P@ssw0rd", "abc123", "tokenguard"):
-        add(_signed(secure_claims(), secret=secret), ["WEAK_KEY"],
-            f"weak key ({secret[:3]}...)")
-    add(_signed(secure_claims(), secret="admin", alg="HS384"), ["WEAK_KEY"],
-        "weak key on HS384 (admin)")
-    add(_signed(secure_claims(), secret="qwerty", alg="HS512"), ["WEAK_KEY"],
-        "weak key on HS512 (qwerty)")
-
-    # ---- more missing-claim combinations ----
-    c = secure_claims(); c.pop("exp"); c.pop("iss")
-    add(_signed(c), ["MISSING_EXP", "MISSING_ISS"], "no exp and no iss")
-    c = secure_claims(); c.pop("exp"); c.pop("aud")
-    add(_signed(c), ["MISSING_EXP", "MISSING_AUD"], "no exp and no aud")
-    c = secure_claims(nbf=NOW + 3600); c.pop("aud")
-    add(_signed(c), ["NOT_YET_VALID", "MISSING_AUD"], "not yet valid + no aud")
-
-    # ---- more expired / lifetime variety ----
-    add(_signed(secure_claims(iat=NOW - 10 * 86400, nbf=NOW - 10 * 86400,
-                              exp=NOW - 9 * 86400)), ["EXPIRED"], "expired 9 days ago")
-    add(_signed(secure_claims(iat=NOW - 960, nbf=NOW - 960, exp=NOW - 60,
-                              password="leak")), ["EXPIRED", "SENSITIVE_DATA"],
-        "expired + sensitive data")
-    add(_signed(secure_claims(exp=NOW + 30 * 86400)), ["LONG_LIFETIME"], "valid for 30 days")
-    add(_signed(secure_claims(exp=NOW + 30 * 86400), secret="secret"),
-        ["LONG_LIFETIME", "WEAK_KEY"], "long lifetime + weak key")
-
-    # ---- more sensitive-data keys ----
-    add(_signed(secure_claims(passwd="hunter2")), ["SENSITIVE_DATA"], "passwd in payload")
-    add(_signed(secure_claims(client_secret="cs-abc123")), ["SENSITIVE_DATA"],
-        "client_secret in payload")
-    add(_signed(secure_claims(apikey="key-xyz")), ["SENSITIVE_DATA"], "apikey in payload")
-    add(_signed(secure_claims(password="pw", ssn="123-45-6789")), ["SENSITIVE_DATA"],
-        "multiple sensitive keys (password + ssn)")
-
-    # ---- more combined issues ----
-    c = secure_claims(password="pw"); c.pop("iss")
-    add(f"{_b64(none_header)}.{_b64(c)}.",
-        ["ALG_NONE", "MISSING_ISS", "SENSITIVE_DATA"], "none + missing iss + sensitive data")
-    add(_signed(secure_claims(), secret="password",
-                headers={"jwk": {"kty": "oct", "k": "YXR0"}}),
-        ["HEADER_JWK", "WEAK_KEY"], "embedded jwk + weak key")
-    c = secure_claims(); c.pop("aud")
-    add(f"{_b64({'alg': 'HS256', 'typ': 'JWT'})}.{_b64(c)}.",
-        ["SIGNATURE_EMPTY", "MISSING_AUD"], "stripped signature + no aud")
-    c = secure_claims(); c.pop("exp")
-    add(f"{_b64({'alg': 'HS1', 'typ': 'JWT'})}.{_b64(c)}.ZHVtbXk",
-        ["ALG_UNKNOWN", "MISSING_EXP"], "unknown alg + missing exp")
-    add(_signed(secure_claims(), secret="secret", headers={"kid": "../../etc/passwd"}),
-        ["HEADER_KID_INJECTION", "WEAK_KEY"], "kid traversal + weak key")
-
-    # ======================================================================
-    # Asymmetric algorithms and algorithm confusion
-    # TokenGuard verifies structure, not signatures, so these are built with
-    # placeholder signatures (no RSA/EC key material required).
-    # ======================================================================
-
-    # ---- secure asymmetric negatives (known alg, sound claims) ----
-    add(_unverified("RS256", secure_claims(), sig_bytes=256), [], "secure RS256")
-    add(_unverified("ES256", secure_claims(), sig_bytes=64), [], "secure ES256")
-    add(_unverified("PS256", secure_claims(), sig_bytes=256), [], "secure PS256")
-    add(_unverified("ES384", secure_claims(), sig_bytes=96), [], "secure ES384")
-    add(f"{_b64({'alg': 'EdDSA', 'typ': 'JWT'})}.{_b64(secure_claims())}."
-        f"{base64.urlsafe_b64encode(b'z' * 64).rstrip(b'=').decode()}",
-        [], "secure EdDSA")
-    # pinned to RS256 and matches -> must NOT be flagged
-    add(_unverified("RS256", secure_claims(), sig_bytes=256), [],
+                              email_verified=True)), [], "benign custom claims")
+    add(_signed(secure_claims(jti="a1", azp="web", scope="read write",
+                              amr=["pwd"], acr="1")), [], "many standard claims")
+    add(_signed(secure_claims(scope="reports.read"), alg="HS384"), [], "secure HS384 w/ scope")
+    add(_unverified("RS256", secure_claims()), [],
         "RS256, app pins RS256 (matches, must NOT be flagged)", expected_algs=["RS256"])
 
-    # ---- algorithm confusion: app expects an asymmetric alg, attacker downgrades ----
+    # ==================================================================
+    # 2. Algorithm defects
+    # ==================================================================
+    # alg=none and its case variations (case-bypass attempts)
+    for alg in ("none", "None", "NONE", "nOnE"):
+        add(_raw({"alg": alg, "typ": "JWT"}, secure_claims(), sig=""),
+            ["ALG_NONE"], f"alg={alg!r} (unsigned)")
+    # missing alg
+    add(_raw({"typ": "JWT"}, secure_claims()), ["ALG_MISSING"], "no 'alg' header")
+    # unknown string algs
+    for alg in ("HS1", "RS1", "foobar", "A128KW"):
+        add(_raw({"alg": alg, "typ": "JWT"}, secure_claims()),
+            ["ALG_UNKNOWN"], f"unknown alg {alg!r}")
+    # non-string algs (malformed)
+    for bad in (123, ["HS256"], True):
+        add(_raw({"alg": bad, "typ": "JWT"}, secure_claims()),
+            ["ALG_UNKNOWN"], f"malformed alg {bad!r}")
+    # stripped signature per HMAC alg + one asymmetric
+    for alg in ("HS256", "HS384", "HS512"):
+        add(_raw({"alg": alg, "typ": "JWT"}, secure_claims(), sig=""),
+            ["SIGNATURE_EMPTY"], f"{alg} header, signature stripped")
+    add(_raw({"alg": "RS256", "typ": "JWT"}, secure_claims(), sig=""),
+        ["SIGNATURE_EMPTY"], "RS256 header, signature stripped")
+    # algorithm confusion (app pins asymmetric, attacker downgrades)
     add(_signed(secure_claims()), ["ALG_UNEXPECTED"],
-        "RS256-expecting app, token forged as HS256 (classic confusion)",
-        expected_algs=["RS256"])
+        "RS256-expecting app, forged HS256 (classic confusion)", expected_algs=["RS256"])
     add(_signed(secure_claims(), alg="HS384"), ["ALG_UNEXPECTED"],
-        "RS384-expecting app, token forged as HS384", expected_algs=["RS384"])
+        "RS384-expecting app, forged HS384", expected_algs=["RS384"])
     add(_signed(secure_claims()), ["ALG_UNEXPECTED"],
-        "ES256-expecting app, token forged as HS256", expected_algs=["ES256"])
-    add(_unverified("RS256", secure_claims(), sig_bytes=256), ["ALG_UNEXPECTED"],
-        "app pins ES256 but receives RS256", expected_algs=["ES256"])
+        "ES256-expecting app, forged HS256", expected_algs=["ES256"])
+    add(_unverified("RS256", secure_claims()), ["ALG_UNEXPECTED"],
+        "ES256-expecting app, receives RS256", expected_algs=["ES256"])
 
-    # ---- algorithm confusion combined with other flaws ----
-    add(_signed(secure_claims(iat=NOW - 7200, nbf=NOW - 7200, exp=NOW - 3600)),
-        ["ALG_UNEXPECTED", "EXPIRED"], "confusion (HS256 vs RS256) + expired",
-        expected_algs=["RS256"])
+    # ==================================================================
+    # 3. Header-injection defects
+    # ==================================================================
+    add(_signed(secure_claims(), headers={"jwk": {"kty": "oct", "k": "YXR0YWNrZXI"}}),
+        ["HEADER_JWK"], "embedded jwk (oct)")
+    add(_signed(secure_claims(), headers={"jwk": {"kty": "RSA", "n": "0vx7", "e": "AQAB"}}),
+        ["HEADER_JWK"], "embedded jwk (RSA)")
+    add(_signed(secure_claims(), headers={"jwk": {"kty": "EC", "crv": "P-256", "x": "f", "y": "g"}}),
+        ["HEADER_JWK"], "embedded jwk (EC)")
+    add(_signed(secure_claims(), headers={"jku": "https://evil.example/keys.json"}),
+        ["HEADER_KEY_URL"], "jku https to attacker")
+    add(_signed(secure_claims(), headers={"jku": "http://127.0.0.1:8000/jwks.json"}),
+        ["HEADER_KEY_URL"], "jku over plain http")
+    add(_signed(secure_claims(), headers={"x5u": "https://evil.example/cert.pem"}),
+        ["HEADER_KEY_URL"], "x5u https to attacker")
+    add(_signed(secure_claims(), headers={"x5u": "http://10.0.0.1/c.pem"}),
+        ["HEADER_KEY_URL"], "x5u over plain http")
+    for kid, note in [
+        ("../../../../dev/null", "kid unix path traversal"),
+        ("..\\..\\windows\\win.ini", "kid windows path traversal"),
+        ("key1' OR '1'='1", "kid SQL injection"),
+        ("a--b", "kid SQL comment"),
+        ("default|whoami", "kid command injection"),
+        ("n\x00ull", "kid null byte"),
+    ]:
+        add(_signed(secure_claims(), headers={"kid": kid}), ["HEADER_KID_INJECTION"], note)
+
+    # ==================================================================
+    # 4. Claim defects
+    # ==================================================================
+    c = secure_claims(); c.pop("exp"); add(_signed(c), ["MISSING_EXP"], "no exp")
+    c = secure_claims(); c.pop("aud"); add(_signed(c), ["MISSING_AUD"], "no aud")
+    c = secure_claims(); c.pop("iss"); add(_signed(c), ["MISSING_ISS"], "no iss")
+    # malformed exp (not a NumericDate)
+    for bad, note in [("not-a-date", "exp is a text string"),
+                      ("1700000000", "exp is a numeric string"),
+                      ([NOW + 900], "exp is a list"),
+                      (True, "exp is a boolean")]:
+        add(_manual_hs256(hs_hdr, secure_claims(exp=bad)), ["INVALID_EXP"], note)
+    # expired
+    add(_signed(expired_claims()), ["EXPIRED"], "expired 1h ago")
+    add(_signed(secure_claims(iat=NOW - 960, nbf=NOW - 960, exp=NOW - 60)),
+        ["EXPIRED"], "expired 1m ago (fresh, 15m lifetime)")
+    add(_signed(secure_claims(iat=NOW - 10 * 86400, nbf=NOW - 10 * 86400,
+                              exp=NOW - 9 * 86400)), ["EXPIRED"], "expired 9 days ago")
+    # excessive lifetime
+    for days, note in [(2, "2 days"), (7, "a week"), (30, "30 days"), (365, "a year")]:
+        add(_signed(secure_claims(exp=NOW + days * 86400)), ["LONG_LIFETIME"],
+            f"valid for {note}")
+    # not yet valid
+    add(_signed(secure_claims(nbf=NOW + 3600)), ["NOT_YET_VALID"], "nbf 1h in the future")
+    add(_signed(secure_claims(nbf=NOW + 86400)), ["NOT_YET_VALID"], "nbf 1 day in the future")
+    # sensitive data: one token per sensitive key the tool recognizes
+    for key in sorted(SENSITIVE_KEYS):
+        add(_signed(secure_claims(**{key: f"VALUE-{key}"})), ["SENSITIVE_DATA"],
+            f"sensitive key {key!r} in payload")
+    add(_signed(secure_claims(password="pw", ssn="123-45-6789",
+                              credit_card="4111111111111111")), ["SENSITIVE_DATA"],
+        "multiple sensitive keys at once")
+
+    # ==================================================================
+    # 5. Weak HMAC keys: every secret in the wordlist (HS256) + other algs
+    # ==================================================================
+    wordlist = [s for s in DEFAULT_WORDLIST.read_text(encoding="utf-8",
+                                                      errors="ignore").splitlines() if s.strip()]
+    for secret in wordlist:
+        add(_signed(secure_claims(), secret=secret, alg="HS256"), ["WEAK_KEY"],
+            f"weak key HS256 ({secret[:3]}...)")
+    for secret in ("secret", "password", "123456", "admin", "qwerty", "changeme"):
+        add(_signed(secure_claims(), secret=secret, alg="HS384"), ["WEAK_KEY"],
+            f"weak key HS384 ({secret[:3]}...)")
+        add(_signed(secure_claims(), secret=secret, alg="HS512"), ["WEAK_KEY"],
+            f"weak key HS512 ({secret[:3]}...)")
+
+    # ==================================================================
+    # 6. Multi-issue combinations
+    # ==================================================================
+    c = secure_claims(); c.pop("exp")
+    add(_raw(none_hdr, c, sig=""), ["ALG_NONE", "MISSING_EXP"], "none + no exp")
+    c = secure_claims(); c.pop("aud")
+    add(_raw(none_hdr, c, sig=""), ["ALG_NONE", "MISSING_AUD"], "none + no aud")
+    c = secure_claims(); c.pop("iss")
+    add(_raw(none_hdr, c, sig=""), ["ALG_NONE", "MISSING_ISS"], "none + no iss")
+    add(_raw(none_hdr, secure_claims(password="pw"), sig=""),
+        ["ALG_NONE", "SENSITIVE_DATA"], "none + sensitive data")
+    c = secure_claims(); c.pop("exp"); c.pop("aud")
+    add(_raw(none_hdr, c, sig=""), ["ALG_NONE", "MISSING_EXP", "MISSING_AUD"],
+        "none + no exp + no aud")
+    c = secure_claims(password="pw"); c.pop("iss")
+    add(_raw(none_hdr, c, sig=""), ["ALG_NONE", "MISSING_ISS", "SENSITIVE_DATA"],
+        "none + no iss + sensitive")
+    add(_signed(expired_claims(), secret="password"), ["EXPIRED", "WEAK_KEY"],
+        "expired + weak key")
+    add(_signed(expired_claims(password="pw")), ["EXPIRED", "SENSITIVE_DATA"],
+        "expired + sensitive data")
+    c = expired_claims(); c.pop("aud")
+    add(_signed(c), ["EXPIRED", "MISSING_AUD"], "expired + no aud")
+    add(_signed(secure_claims(exp=NOW + 30 * 86400), secret="secret"),
+        ["LONG_LIFETIME", "WEAK_KEY"], "long lifetime + weak key")
+    add(_signed(secure_claims(exp=NOW + 365 * 86400, api_key="AK-x")),
+        ["LONG_LIFETIME", "SENSITIVE_DATA"], "long lifetime + sensitive data")
+    c = secure_claims(); c.pop("aud")
+    add(_signed(c, secret="secret"), ["MISSING_AUD", "WEAK_KEY"], "no aud + weak key")
+    c = secure_claims(); c.pop("exp"); c.pop("iss")
+    add(_signed(c), ["MISSING_EXP", "MISSING_ISS"], "no exp + no iss")
+    c = secure_claims(); c.pop("exp"); c.pop("aud")
+    add(_signed(c), ["MISSING_EXP", "MISSING_AUD"], "no exp + no aud")
+    c = secure_claims(nbf=NOW + 3600); c.pop("aud")
+    add(_signed(c), ["NOT_YET_VALID", "MISSING_AUD"], "not yet valid + no aud")
+    add(_signed(secure_claims(), secret="password",
+                headers={"jwk": {"kty": "oct", "k": "YXR0"}}),
+        ["HEADER_JWK", "WEAK_KEY"], "jwk + weak key")
+    c = secure_claims(); c.pop("exp")
+    add(_signed(c, headers={"jku": "https://evil.example/keys.json"}),
+        ["HEADER_KEY_URL", "MISSING_EXP"], "jku + no exp")
+    add(_signed(secure_claims(), secret="secret", headers={"kid": "../../etc/passwd"}),
+        ["HEADER_KID_INJECTION", "WEAK_KEY"], "kid traversal + weak key")
+    c = secure_claims(); c.pop("aud")
+    add(_raw(hs_hdr, c, sig=""), ["SIGNATURE_EMPTY", "MISSING_AUD"],
+        "stripped signature + no aud")
+    c = secure_claims(); c.pop("exp")
+    add(_raw({"alg": "HS1", "typ": "JWT"}, c), ["ALG_UNKNOWN", "MISSING_EXP"],
+        "unknown alg + no exp")
+    c = secure_claims(); c.pop("exp")
+    add(_raw({"alg": 123, "typ": "JWT"}, c), ["ALG_UNKNOWN", "MISSING_EXP"],
+        "malformed alg + no exp")
+    add(_signed(expired_claims()), ["ALG_UNEXPECTED", "EXPIRED"],
+        "confusion (HS256 vs RS256) + expired", expected_algs=["RS256"])
     c = secure_claims(); c.pop("aud")
     add(_signed(c, secret="secret"), ["ALG_UNEXPECTED", "MISSING_AUD", "WEAK_KEY"],
-        "confusion + missing aud + weak key", expected_algs=["RS256"])
-
-    # ---- asymmetric tokens with claim-level issues (alg is fine, claims are not) ----
-    c = secure_claims(); c.pop("exp")
-    add(_unverified("RS256", c, sig_bytes=256), ["MISSING_EXP"], "RS256 with no exp")
-    add(_unverified("ES256", secure_claims(exp=NOW - 3600, iat=NOW - 7200, nbf=NOW - 7200),
-                    sig_bytes=64), ["EXPIRED"], "ES256 expired")
-    add(_unverified("RS256", secure_claims(password="pw"), sig_bytes=256),
-        ["SENSITIVE_DATA"], "RS256 with sensitive data")
-    add(_unverified("RS256", secure_claims(exp=NOW + 365 * 86400), sig_bytes=256),
-        ["LONG_LIFETIME"], "RS256 valid for a year")
+        "confusion + no aud + weak key", expected_algs=["RS256"])
+    add(_signed(secure_claims(), headers={
+        "jwk": {"kty": "oct", "k": "YXR0"},
+        "jku": "https://evil.example/k.json",
+        "kid": "../../etc/passwd",
+    }), ["HEADER_JWK", "HEADER_KEY_URL", "HEADER_KID_INJECTION"], "header soup (jwk+jku+kid)")
 
     return recs
 

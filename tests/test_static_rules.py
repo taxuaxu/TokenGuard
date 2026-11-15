@@ -147,3 +147,15 @@ def test_groups_can_be_selected():
     tok = make({"sub": "x"}, secret="secret")
     assert "WEAK_KEY" not in ids(tok, groups=["algorithm", "claims"])
     assert ids(tok, groups=["weak_key"]) == {"WEAK_KEY"}
+
+
+# ---------- robustness: malformed / non-string alg must not crash ----------
+
+@pytest.mark.parametrize("bad_alg", [["HS256"], 123, True, {"x": 1}])
+def test_non_string_alg_does_not_crash(bad_alg):
+    # A non-string 'alg' (including an unhashable list/dict) must be reported
+    # as malformed, not raise, even with the weak_key group enabled.
+    tok = raw({"alg": bad_alg, "typ": "JWT"}, {"sub": "x"}, sig="ZHVtbXk")
+    found = ids(tok, groups=["algorithm", "claims", "weak_key"])
+    assert "ALG_UNKNOWN" in found
+    assert "WEAK_KEY" not in found
