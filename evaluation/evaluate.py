@@ -38,8 +38,10 @@ CONFIGS = {
 }
 
 # Rule ids the dataset labels (full TokenGuard scoring space).
-LABELED = {"ALG_NONE", "MISSING_EXP", "MISSING_AUD", "MISSING_ISS", "EXPIRED",
-           "LONG_LIFETIME", "WEAK_KEY", "SENSITIVE_DATA"}
+LABELED = {"ALG_NONE", "ALG_UNKNOWN", "SIGNATURE_EMPTY",
+           "HEADER_JWK", "HEADER_KEY_URL", "HEADER_KID_INJECTION",
+           "MISSING_EXP", "MISSING_AUD", "MISSING_ISS", "EXPIRED",
+           "LONG_LIFETIME", "NOT_YET_VALID", "WEAK_KEY", "SENSITIVE_DATA"}
 
 
 def load(path=DATA):
