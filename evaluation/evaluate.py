@@ -82,6 +82,24 @@ def score(records, detect_fn, label_space):
             "f1": f1, "false_positives": fp_detail, "false_negatives": fn_detail}
 
 
+def per_class(records, detect_fn, label_space):
+    """Per-rule support and precision/recall across the dataset."""
+    stats = {rid: {"support": 0, "tp": 0, "fp": 0, "fn": 0} for rid in sorted(label_space)}
+    for rec in records:
+        expected = set(rec["labels"]) & label_space
+        got = detect_fn(rec) & label_space
+        for rid in expected:
+            stats[rid]["support"] += 1
+            stats[rid]["tp" if rid in got else "fn"] += 1
+        for rid in got - expected:
+            stats[rid]["fp"] += 1
+    for s in stats.values():
+        tp, fp, fn = s["tp"], s["fp"], s["fn"]
+        s["precision"] = tp / (tp + fp) if tp + fp else 1.0
+        s["recall"] = tp / (tp + fn) if tp + fn else 1.0
+    return stats
+
+
 def _print_row(name, s):
     print(f"{name:<14}{s['precision']:>11.3f}{s['recall']:>9.3f}{s['f1']:>8.3f}"
           f"{s['fp']:>5}{s['fn']:>5}")
@@ -114,6 +132,16 @@ def main(argv=None):
     print("  False negatives:", "none" if not allr["false_negatives"] else "")
     for note, ids in allr["false_negatives"]:
         print(f"    - {note}: {ids}")
+
+    # -------- per-class breakdown (config 'all') --------
+    pc = per_class(records, lambda rec: tokenguard_ids(rec, ALL_GROUPS), LABELED)
+    allr["per_class"] = pc
+    print("\nPer-class detection ('all'):")
+    print(f"{'rule_id':<22}{'support':>8}{'TP':>4}{'FP':>4}{'FN':>4}{'prec':>7}{'recall':>8}")
+    print("-" * 57)
+    for rid, s in pc.items():
+        print(f"{rid:<22}{s['support']:>8}{s['tp']:>4}{s['fp']:>4}{s['fn']:>4}"
+              f"{s['precision']:>7.2f}{s['recall']:>8.2f}")
 
     # -------- optional head-to-head against jwt_tool --------
     jt = JwtTool.locate(args.jwt_tool, python_exe=args.python)
