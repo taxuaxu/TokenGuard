@@ -39,7 +39,11 @@ def secure_claims(**over):
 
 def records():
     recs = []
-    add = lambda token, labels, note: recs.append({"token": token, "labels": labels, "note": note})
+    # Record the generation time with each token so the evaluator analyzes it
+    # against a fixed reference time, not the wall clock. Otherwise short-lived
+    # secure tokens (exp=NOW+60) would flip to EXPIRED when evaluated later.
+    add = lambda token, labels, note: recs.append(
+        {"token": token, "labels": labels, "note": note, "now": NOW})
 
     # ---- secure negative examples (labels = []) ----
     add(jwt.encode(secure_claims(), STRONG, algorithm="HS256"), [], "standard secure HS256")

@@ -31,10 +31,13 @@ class Finding:
 
 
 def mask(value, visible: int = 2) -> str:
-    """Mask a sensitive value, keeping only the first/last `visible` chars."""
+    """Mask a sensitive value, revealing only the last `visible` characters and
+    only when the value is long enough that most of it stays hidden. Short values
+    (<= 6 chars), such as common recovered secrets, are masked completely so that
+    guessable keys are not partially leaked in the output."""
     if value is None:
         return ""
     value = str(value)
-    if len(value) <= visible * 2:
+    if len(value) <= 6:
         return "*" * len(value)
-    return value[:visible] + "*" * (len(value) - visible * 2) + value[-visible:]
+    return "*" * (len(value) - visible) + value[-visible:]

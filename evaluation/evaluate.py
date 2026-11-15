@@ -28,10 +28,13 @@ from evaluation.baselines import OVERLAP_LABELS, JwtTool  # noqa: E402
 
 DATA = Path(__file__).resolve().parent.parent / "dataset" / "tokens.jsonl"
 
+# There are three rule groups, so "all checks" == "basic + weak-key". The two
+# meaningful, distinct configurations are therefore basic (no weak-key detection)
+# and all (with it); the jwt_tool benchmark below is the third point of comparison.
+ALL_GROUPS = ["algorithm", "claims", "weak_key"]
 CONFIGS = {
     "basic": ["algorithm", "claims"],
-    "basic+weak": ["algorithm", "claims", "weak_key"],
-    "all": ["algorithm", "claims", "weak_key"],
+    "all": ALL_GROUPS,
 }
 
 # Rule ids the dataset labels (full TokenGuard scoring space).
@@ -46,17 +49,20 @@ def load(path=DATA):
         return [json.loads(line) for line in fh if line.strip()]
 
 
-def tokenguard_ids(token, groups):
-    return {f.rule_id for f in analyze(token, groups=groups, config=AnalysisConfig())}
+def tokenguard_ids(rec, groups):
+    # Analyze against the token's generation time, not the wall clock, so that
+    # time-relative checks (EXPIRED, LONG_LIFETIME) are reproducible.
+    cfg = AnalysisConfig(now=rec.get("now"))
+    return {f.rule_id for f in analyze(rec["token"], groups=groups, config=cfg)}
 
 
 def score(records, detect_fn, label_space):
-    """detect_fn(token) -> set of rule_ids. Scoring is restricted to label_space."""
+    """detect_fn(record) -> set of rule_ids. Scoring is restricted to label_space."""
     tp = fp = fn = 0
     fp_detail, fn_detail = [], []
     for rec in records:
         expected = set(rec["labels"]) & label_space
-        got = detect_fn(rec["token"]) & label_space
+        got = detect_fn(rec) & label_space
         tp += len(expected & got)
         extra, missed = got - expected, expected - got
         fp += len(extra)
@@ -92,7 +98,7 @@ def main(argv=None):
     print("-" * 52)
     results = {}
     for name, groups in CONFIGS.items():
-        s = score(records, lambda t, g=groups: tokenguard_ids(t, g), LABELED)
+        s = score(records, lambda rec, g=groups: tokenguard_ids(rec, g), LABELED)
         results[name] = s
         _print_row(name, s)
 
@@ -113,9 +119,9 @@ def main(argv=None):
         print(f"(benchmarking against jwt_tool at {jt.path})")
         print(f"{'tool':<14}{'precision':>11}{'recall':>9}{'F1':>8}{'FP':>5}{'FN':>5}")
         print("-" * 52)
-        tg = score(records, lambda t: tokenguard_ids(t, CONFIGS["all"]), OVERLAP_LABELS)
+        tg = score(records, lambda rec: tokenguard_ids(rec, ALL_GROUPS), OVERLAP_LABELS)
         _print_row("TokenGuard", tg)
-        baseline = score(records, jt.labels, OVERLAP_LABELS)
+        baseline = score(records, lambda rec: jt.labels(rec["token"]), OVERLAP_LABELS)
         _print_row("jwt_tool", baseline)
         results["_head_to_head"] = {"TokenGuard": tg, "jwt_tool": baseline}
     else:

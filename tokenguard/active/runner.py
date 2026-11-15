@@ -85,6 +85,13 @@ def test_endpoint(client, endpoint: str, config: Optional[AnalysisConfig] = None
     results: List[ActiveResult] = []
 
     results.append(_send(client, endpoint, "NO_TOKEN", None, False))
+
+    if not baseline:
+        results.append(ActiveResult(
+            endpoint, "BASELINE_VALID", None, False, True,
+            "could not obtain a baseline token from the server; attacks skipped"))
+        return results
+
     base = _send(client, endpoint, "BASELINE_VALID", baseline, True)
     if not base.accepted:
         base.note = "valid token rejected; remaining results inconclusive"

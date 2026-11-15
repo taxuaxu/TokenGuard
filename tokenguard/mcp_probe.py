@@ -106,12 +106,19 @@ def run_mcp_probe(target: str = "http://127.0.0.1:7000", client=None) -> List[MC
         f"status={status}, authorization_servers={auth_servers}",
     ))
 
-    # Discover the token endpoint (fall back to a conventional path).
+    # Discover the token endpoint from the authorization-server metadata
+    # (RFC 8414). Fall back to a conventional path only if discovery fails.
     token_endpoint = None
+    discovered = False
     if auth_servers:
         as_url = auth_servers[0].rstrip("/")
         status, _, asm = client.get(f"{as_url}/.well-known/oauth-authorization-server")
         token_endpoint = asm.get("token_endpoint")
+        discovered = bool(token_endpoint)
+    results.append(MCPProbeResult(
+        "AS_DISCOVERY", discovered,
+        f"token_endpoint={'discovered: ' + token_endpoint if discovered else 'not discovered (using fallback)'}",
+    ))
     if not token_endpoint:
         token_endpoint = f"{base}/as/token"
 
