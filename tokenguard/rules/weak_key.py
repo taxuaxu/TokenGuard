@@ -36,7 +36,9 @@ def crack_hmac(t: ParsedToken, candidates: Sequence[str]) -> Optional[str]:
 
 
 def check_weak_hmac_key(t: ParsedToken, cfg: AnalysisConfig) -> List[Finding]:
-    if t.alg not in HMAC_ALGS:
+    # Guard against a non-string (and possibly unhashable, e.g. list) 'alg'
+    # before the set membership test; such tokens are flagged elsewhere.
+    if not isinstance(t.alg, str) or t.alg not in HMAC_ALGS:
         return []
     candidates = list(cfg.extra_secrets) + list(load_wordlist(str(cfg.wordlist_path)))
     secret = crack_hmac(t, candidates)
