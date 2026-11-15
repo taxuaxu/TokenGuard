@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dataset/tokens.jsonl
+evaluation/results*.json
