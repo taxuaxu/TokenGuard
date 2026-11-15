@@ -8,6 +8,8 @@ Usage:  python dataset/generate.py            -> writes dataset/tokens.jsonl
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import time
 import warnings
@@ -39,6 +41,15 @@ def secure_claims(**over):
 
 def _signed(claims, secret=STRONG, alg="HS256", headers=None):
     return jwt.encode(claims, secret, algorithm=alg, headers=headers)
+
+
+def _manual_hs256(header, payload, secret=STRONG):
+    """Build an HS256 token with full control of the raw payload (e.g. a
+    malformed 'exp'), which jwt.encode would coerce or reject."""
+    signing_input = f"{_b64(header)}.{_b64(payload)}".encode()
+    sig = base64.urlsafe_b64encode(
+        hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()).rstrip(b"=").decode()
+    return f"{signing_input.decode()}.{sig}"
 
 
 def records():
@@ -148,6 +159,95 @@ def records():
         ["HEADER_KEY_URL", "MISSING_EXP"], "jku key URL + missing exp")
     add(_signed(secure_claims(exp=NOW + 365 * 86400, api_key="AK-xyz")),
         ["LONG_LIFETIME", "SENSITIVE_DATA"], "long lifetime + api_key in payload")
+
+    # ======================================================================
+    # Extended set
+    # ======================================================================
+
+    # ---- more secure negatives (variety + boundaries) ----
+    add(_signed(secure_claims(jti="a1b2c3", azp="web-client", scope="read write")), [],
+        "secure with jti/azp/scope")
+    add(_signed(secure_claims(exp=NOW + 86400)), [],
+        "lifetime exactly at the 24h limit (boundary, must NOT be flagged)")
+    add(_signed(secure_claims(aud=["tokenguard-api"])), [],
+        "single-element audience list")
+    add(_signed(secure_claims(department="eng", email="user@lab.local",
+                              email_verified=True)), [], "secure with benign custom claims")
+    add(_signed(secure_claims(scope="reports.read"), alg="HS384"), [],
+        "secure HS384 with scope")
+    add(_signed(secure_claims(sub="svc-2", role="service", jti="svc-token-1")), [],
+        "second service account, sound")
+    add(_signed(secure_claims(iat=NOW - 120, nbf=NOW - 120)), [],
+        "issued 2m ago, still valid")
+
+    # ---- missing 'alg' header ----
+    add(f"{_b64({'typ': 'JWT'})}.{_b64(secure_claims())}.ZHVtbXk",
+        ["ALG_MISSING"], "header without an 'alg' field")
+
+    # ---- malformed 'exp' (not a NumericDate) ----
+    add(_manual_hs256({"alg": "HS256", "typ": "JWT"}, secure_claims(exp="not-a-date")),
+        ["INVALID_EXP"], "exp is a string, not a timestamp")
+    add(_manual_hs256({"alg": "HS256", "typ": "JWT"}, secure_claims(exp="1700000000")),
+        ["INVALID_EXP"], "exp is a numeric string, not a number")
+
+    # ---- more header-injection variety ----
+    add(_signed(secure_claims(), headers={"kid": "default|whoami"}),
+        ["HEADER_KID_INJECTION"], "kid command-injection characters")
+    add(_signed(secure_claims(), headers={"jku": "http://127.0.0.1:8000/jwks.json"}),
+        ["HEADER_KEY_URL"], "jku over plain http")
+    add(_signed(secure_claims(), headers={"jwk": {"kty": "RSA", "n": "0vx7...", "e": "AQAB"}}),
+        ["HEADER_JWK"], "embedded RSA jwk")
+
+    # ---- more weak keys (wordlist coverage, more algorithms) ----
+    for secret in ("dragon", "P@ssw0rd", "abc123", "tokenguard"):
+        add(_signed(secure_claims(), secret=secret), ["WEAK_KEY"],
+            f"weak key ({secret[:3]}...)")
+    add(_signed(secure_claims(), secret="admin", alg="HS384"), ["WEAK_KEY"],
+        "weak key on HS384 (admin)")
+    add(_signed(secure_claims(), secret="qwerty", alg="HS512"), ["WEAK_KEY"],
+        "weak key on HS512 (qwerty)")
+
+    # ---- more missing-claim combinations ----
+    c = secure_claims(); c.pop("exp"); c.pop("iss")
+    add(_signed(c), ["MISSING_EXP", "MISSING_ISS"], "no exp and no iss")
+    c = secure_claims(); c.pop("exp"); c.pop("aud")
+    add(_signed(c), ["MISSING_EXP", "MISSING_AUD"], "no exp and no aud")
+    c = secure_claims(nbf=NOW + 3600); c.pop("aud")
+    add(_signed(c), ["NOT_YET_VALID", "MISSING_AUD"], "not yet valid + no aud")
+
+    # ---- more expired / lifetime variety ----
+    add(_signed(secure_claims(iat=NOW - 10 * 86400, nbf=NOW - 10 * 86400,
+                              exp=NOW - 9 * 86400)), ["EXPIRED"], "expired 9 days ago")
+    add(_signed(secure_claims(iat=NOW - 960, nbf=NOW - 960, exp=NOW - 60,
+                              password="leak")), ["EXPIRED", "SENSITIVE_DATA"],
+        "expired + sensitive data")
+    add(_signed(secure_claims(exp=NOW + 30 * 86400)), ["LONG_LIFETIME"], "valid for 30 days")
+    add(_signed(secure_claims(exp=NOW + 30 * 86400), secret="secret"),
+        ["LONG_LIFETIME", "WEAK_KEY"], "long lifetime + weak key")
+
+    # ---- more sensitive-data keys ----
+    add(_signed(secure_claims(passwd="hunter2")), ["SENSITIVE_DATA"], "passwd in payload")
+    add(_signed(secure_claims(client_secret="cs-abc123")), ["SENSITIVE_DATA"],
+        "client_secret in payload")
+    add(_signed(secure_claims(apikey="key-xyz")), ["SENSITIVE_DATA"], "apikey in payload")
+    add(_signed(secure_claims(password="pw", ssn="123-45-6789")), ["SENSITIVE_DATA"],
+        "multiple sensitive keys (password + ssn)")
+
+    # ---- more combined issues ----
+    c = secure_claims(password="pw"); c.pop("iss")
+    add(f"{_b64(none_header)}.{_b64(c)}.",
+        ["ALG_NONE", "MISSING_ISS", "SENSITIVE_DATA"], "none + missing iss + sensitive data")
+    add(_signed(secure_claims(), secret="password",
+                headers={"jwk": {"kty": "oct", "k": "YXR0"}}),
+        ["HEADER_JWK", "WEAK_KEY"], "embedded jwk + weak key")
+    c = secure_claims(); c.pop("aud")
+    add(f"{_b64({'alg': 'HS256', 'typ': 'JWT'})}.{_b64(c)}.",
+        ["SIGNATURE_EMPTY", "MISSING_AUD"], "stripped signature + no aud")
+    c = secure_claims(); c.pop("exp")
+    add(f"{_b64({'alg': 'HS1', 'typ': 'JWT'})}.{_b64(c)}.ZHVtbXk",
+        ["ALG_UNKNOWN", "MISSING_EXP"], "unknown alg + missing exp")
+    add(_signed(secure_claims(), secret="secret", headers={"kid": "../../etc/passwd"}),
+        ["HEADER_KID_INJECTION", "WEAK_KEY"], "kid traversal + weak key")
 
     return recs
 
