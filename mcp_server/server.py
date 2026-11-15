@@ -31,7 +31,11 @@ TOKEN_TTL = 900
 def create_app(enforce_audience: bool = True, issuer_base: str = "http://127.0.0.1:7000"):
     app = Flask(__name__)
     issuer_base = issuer_base.rstrip("/")
-    as_issuer = f"{issuer_base}/as"
+    # The AS issuer identifier is the base URL (no path), so its metadata lives at
+    # {issuer_base}/.well-known/oauth-authorization-server per RFC 8414 and OAuth
+    # discovery resolves it correctly. The token endpoint itself is still under /as.
+    as_issuer = issuer_base
+    token_endpoint = f"{issuer_base}/as/token"
     resource_uri = f"{issuer_base}/mcp"          # this server's canonical resource id
     prm_url = f"{issuer_base}/.well-known/oauth-protected-resource"
 
@@ -44,7 +48,7 @@ def create_app(enforce_audience: bool = True, issuer_base: str = "http://127.0.0
     def as_metadata():
         return jsonify({
             "issuer": as_issuer,
-            "token_endpoint": f"{as_issuer}/token",
+            "token_endpoint": token_endpoint,
             "token_endpoint_auth_methods_supported": ["none"],
             "grant_types_supported": ["client_credentials"],
             "response_types_supported": ["token"],
