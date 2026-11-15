@@ -84,6 +84,17 @@ def _manual_hs256(header, payload, secret=STRONG):
     return f"{signing_input.decode()}.{sig}"
 
 
+def _b64s(s: str) -> str:
+    """Base64URL-encode a raw string (used to keep duplicate JSON keys intact,
+    which json.dumps would collapse)."""
+    return base64.urlsafe_b64encode(s.encode()).rstrip(b"=").decode()
+
+
+def _raw_payload(header, payload_json: str, sig="ZHVtbXk") -> str:
+    """Token with a hand-written (possibly duplicate-keyed) raw JSON payload."""
+    return f"{_b64(header)}.{_b64s(payload_json)}.{sig}"
+
+
 def _raw(header, payload, sig="ZHVtbXk") -> str:
     """Token with an arbitrary header and a placeholder signature. Used for
     cases jwt.encode refuses to build (alg=none, missing/unknown/non-string
@@ -325,6 +336,31 @@ def records(weak_sample=15):
         "jku": "https://evil.example/k.json",
         "kid": "../../etc/passwd",
     }), ["HEADER_JWK", "HEADER_KEY_URL", "HEADER_KID_INJECTION"], "header soup (jwk+jku+kid)")
+
+    # ======================================================================
+    # 'crit' header abuse (RFC 7515) and duplicate JSON keys (parser confusion)
+    # ======================================================================
+    add(_manual_hs256({"alg": "HS256", "typ": "JWT", "crit": ["alg"]}, secure_claims()),
+        ["CRIT_HEADER"], "crit names a registered header (alg)")
+    add(_manual_hs256({"alg": "HS256", "typ": "JWT", "crit": ["x-custom"]}, secure_claims()),
+        ["CRIT_HEADER"], "crit names a header not present")
+    add(_manual_hs256({"alg": "HS256", "typ": "JWT", "crit": "x"}, secure_claims()),
+        ["CRIT_HEADER"], "crit is not an array")
+    # well-formed crit (custom extension, present) must NOT be flagged
+    add(_manual_hs256({"alg": "HS256", "typ": "JWT", "crit": ["x-custom"], "x-custom": True},
+                      secure_claims()), [], "crit well-formed and present (secure)")
+
+    dup_payload = ('{"iss":"' + ISSUER + '","aud":"' + AUDIENCE + '","sub":"a","sub":"b",'
+                   + f'"iat":{NOW},"nbf":{NOW},"exp":{NOW + 900}' + '}')
+    add(_raw_payload({"alg": "HS256", "typ": "JWT"}, dup_payload),
+        ["DUPLICATE_KEYS"], "duplicate 'sub' in payload")
+    dup_typ_header = '{"typ":"JWT","typ":"JWT","alg":"HS256"}'
+    add(_b64s(dup_typ_header) + "." + _b64(secure_claims()) + ".ZHVtbXk",
+        ["DUPLICATE_KEYS"], "duplicate 'typ' in header")
+    # duplicate 'alg' smuggling: the last value (none) wins -> ALG_NONE + DUPLICATE_KEYS
+    dup_alg_header = '{"alg":"HS256","alg":"none","typ":"JWT"}'
+    add(_b64s(dup_alg_header) + "." + _b64(secure_claims()) + ".",
+        ["ALG_NONE", "DUPLICATE_KEYS"], "duplicate 'alg' (HS256 then none) smuggling")
 
     return recs
 

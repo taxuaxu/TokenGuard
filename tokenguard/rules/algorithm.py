@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import List
 
 from ..config import AnalysisConfig
 from ..models import Finding, Severity
-from ..parser import ParsedToken
+from ..parser import ParsedToken, b64url_decode
 
 KNOWN_ALGS = {
     "HS256", "HS384", "HS512",
@@ -102,5 +103,77 @@ def check_key_injection_headers(t: ParsedToken, cfg: AnalysisConfig) -> List[Fin
     return out
 
 
+# Registered JOSE header parameter names (RFC 7515/7516/7518/7797). A 'crit'
+# entry naming one of these is invalid per RFC 7515 4.1.11.
+REGISTERED_HEADERS = {
+    "alg", "jku", "jwk", "kid", "x5u", "x5c", "x5t", "x5t#S256", "typ", "cty",
+    "crit", "b64", "enc", "zip", "epk", "apu", "apv", "iv", "tag", "p2s", "p2c",
+}
+
+
+def check_crit_header(t: ParsedToken, cfg: AnalysisConfig) -> List[Finding]:
+    if "crit" not in t.header:
+        return []
+    crit = t.header["crit"]
+    reasons = []
+    if not isinstance(crit, list) or not crit or not all(isinstance(x, str) for x in crit):
+        reasons.append("'crit' must be a non-empty array of strings")
+    else:
+        registered = [x for x in crit if x in REGISTERED_HEADERS]
+        absent = [x for x in crit if x not in t.header]
+        if registered:
+            reasons.append(f"names registered header(s) {registered}")
+        if absent:
+            reasons.append(f"names header(s) not present {absent}")
+    if not reasons:
+        return []  # a well-formed crit (custom extensions, all present) is valid
+    return [Finding(
+        "CRIT_HEADER", "Abused 'crit' header", "header", Severity.MEDIUM,
+        "The 'crit' header lists extensions a verifier must understand, but here it is "
+        "misused (" + "; ".join(reasons) + "). Verifiers that ignore 'crit' or mishandle "
+        "it can be tricked into accepting a token they do not fully process.",
+        evidence=f"crit={crit!r}",
+    )]
+
+
+def _duplicate_keys(segment_b64: str) -> List[str]:
+    """Return keys that appear more than once in the raw JSON of a segment."""
+    try:
+        raw = b64url_decode(segment_b64)
+    except Exception:  # noqa: BLE001
+        return []
+    dups: List[str] = []
+
+    def hook(pairs):
+        seen = set()
+        for k, _ in pairs:
+            if k in seen:
+                dups.append(k)
+            seen.add(k)
+        return dict(pairs)
+
+    try:
+        json.loads(raw, object_pairs_hook=hook)
+    except Exception:  # noqa: BLE001
+        return []
+    return dups
+
+
+def check_duplicate_keys(t: ParsedToken, cfg: AnalysisConfig) -> List[Finding]:
+    out = []
+    for part, seg in (("header", t.header_b64), ("payload", t.payload_b64)):
+        dups = sorted(set(_duplicate_keys(seg)))
+        if dups:
+            out.append(Finding(
+                "DUPLICATE_KEYS", "Duplicate JSON keys", part, Severity.HIGH,
+                "The JSON contains duplicate keys. JWT libraries resolve duplicates "
+                "differently (first vs last wins), so an attacker can craft one token that "
+                "one component validates while another trusts different values (parser "
+                "differential / claim smuggling).",
+                evidence=f"duplicated: {dups}",
+            ))
+    return out
+
+
 RULES = [check_none_alg, check_alg_missing_or_unknown, check_signature_present,
-         check_key_injection_headers]
+         check_key_injection_headers, check_crit_header, check_duplicate_keys]

@@ -188,7 +188,7 @@ STR = {
               "server accepts it."},
     "act_run": {"tr": "Aktif testleri çalıştır", "en": "Run active tests"},
     "act_matrix_legend": {
-        "tr": "🟥 VULN = güvensiz token kabul edildi · 🟩 = doğru davranış (ret/kabul) · "
+        "tr": "🟥 AÇIK = güvensiz token kabul edildi · 🟩 = doğru davranış (ret/kabul) · "
               "– = atlandı · küçük sayı = HTTP durum kodu · hücrenin üzerine gel → not.",
         "en": "🟥 VULN = insecure token accepted · 🟩 = correct behavior · – = skipped · "
               "small number = HTTP status · hover a cell for its note."},
@@ -290,6 +290,124 @@ def t(key: str, **fmt) -> str:
 
 def server_label(key: str) -> str:
     return t(f"srv_{key}")
+
+
+# Turkish rendering of engine output (findings / parts / matrix). The engine
+# itself stays English (CLI, tests, JSON); only the dashboard localizes for
+# display. Keyed by the exact English title, so each finding variant is distinct.
+FIND_TR = {
+    "Unsigned token (alg=none)": (
+        "İmzasız token (alg=none)",
+        "Başlık 'none' algoritmasını belirtiyor, yani token imza taşımıyor. Kabul eden "
+        "herhangi bir sunucu, saldırganın istediği iddiaları (claim) sahtelemesine izin verir."),
+    "Missing 'alg' header": (
+        "'alg' başlığı eksik",
+        "'alg' değeri olmadan doğrulayıcı bir varsayılana düşebilir ya da doğrulamayı atlayabilir."),
+    "Malformed 'alg' header": (
+        "Bozuk 'alg' başlığı", "'alg' değeri bir metin (string) değil."),
+    "Unknown signing algorithm": (
+        "Bilinmeyen imza algoritması",
+        "Algoritma standart bir JWS algoritması değil; kütüphaneler bunu öngörülemez "
+        "şekilde işleyebilir."),
+    "Unexpected signing algorithm": (
+        "Beklenmeyen imza algoritması",
+        "Algoritma, uygulamanın beklediğinden farklı. Algoritma karışıklığı (ör. RS256 → "
+        "HS256) saldırganların açık anahtarla token imzalamasına yol açabilir."),
+    "Empty signature": (
+        "Boş imza",
+        "Başlık bir imza algoritması belirtiyor ama imza bölümü boş; bu, imza kontrolünü "
+        "atlayan doğrulayıcıları yoklamanın yaygın bir yoludur."),
+    "Embedded public key (jwk)": (
+        "Gömülü açık anahtar (jwk)",
+        "Token kendi doğrulama anahtarını sağlıyor. Sunucu buna güvenirse, saldırgan kendi "
+        "ürettiği anahtarla token imzalayabilir."),
+    "Remote key URL (jku)": (
+        "Uzak anahtar URL'si (jku)",
+        "'jku' başlığı doğrulayıcıyı anahtarı için bir URL'ye yönlendirir. Katı bir izin "
+        "listesi olmadan saldırganlar kendi anahtarlarını barındırabilir."),
+    "Remote key URL (x5u)": (
+        "Uzak anahtar URL'si (x5u)",
+        "'x5u' başlığı doğrulayıcıyı anahtarı için bir URL'ye yönlendirir. Katı bir izin "
+        "listesi olmadan saldırganlar kendi anahtarlarını barındırabilir."),
+    "Suspicious 'kid' value": (
+        "Şüpheli 'kid' değeri",
+        "Anahtar kimliği (kid) dizin aşımı (path traversal) veya enjeksiyon karakterleri "
+        "içeriyor; bu, 'kid'i dosya yollarında veya veritabanı sorgularında kullanan "
+        "sunucuları kötüye kullanabilir."),
+    "No expiration time (exp)": (
+        "Son kullanma yok (exp)",
+        "Token hiç sona ermiyor. Çalınırsa süresiz olarak tekrar kullanılabilir."),
+    "Malformed 'exp' claim": (
+        "Bozuk 'exp' iddiası", "'exp' bir NumericDate (epoch'tan beri saniye) olmalı."),
+    "Token has expired": (
+        "Token süresi dolmuş",
+        "Token son kullanma zamanını geçmiş. Reddedilmeli; bir sunucu hâlâ kabul ediyorsa "
+        "son kullanma uygulanmıyor demektir."),
+    "Excessively long token lifetime": (
+        "Aşırı uzun token ömrü",
+        "Token, yapılandırılmış maksimumdan daha uzun süre geçerli. Uzun ömürlü token'lar "
+        "tekrar saldırısı (replay) penceresini genişletir."),
+    "No audience (aud)": (
+        "Hedef kitle yok (aud)",
+        "Hedef kitle olmadan token belirli bir servise bağlı değildir ve aynı vericiye "
+        "güvenen başka servislerce kabul edilebilir (token yeniden kullanımı)."),
+    "No issuer (iss)": (
+        "Verici yok (iss)",
+        "Verici olmadan doğrulayıcı token'ı kimin oluşturduğunu doğrulayamaz."),
+    "Token not yet valid (nbf)": (
+        "Token henüz geçerli değil (nbf)", "'nbf' zamanı gelecekte."),
+    "Sensitive data in payload": (
+        "Yükte hassas veri",
+        "JWT yükleri yalnızca Base64URL ile kodlanır, şifrelenmez. Token'ı elinde tutan "
+        "herkes bu değerleri okuyabilir."),
+    "Weak HMAC signing key recovered": (
+        "Zayıf HMAC imza anahtarı kurtarıldı",
+        "İmza sırrı, yaygın sırlardan oluşan bir wordlist'te bulundu. Sırrı ele geçiren "
+        "saldırgan istediği iddialarla geçerli token üretebilir."),
+    "Abused 'crit' header": (
+        "İstismar edilmiş 'crit' başlığı",
+        "'crit' başlığı, doğrulayıcının anlaması gereken uzantıları listeler ama burada "
+        "kötüye kullanılmış. 'crit'i yok sayan veya yanlış işleyen doğrulayıcılar, tam "
+        "işlemedikleri bir token'ı kabul etmeye kandırılabilir."),
+    "Duplicate JSON keys": (
+        "Yinelenen JSON anahtarları",
+        "JSON yinelenen anahtarlar içeriyor. JWT kütüphaneleri yinelenenleri farklı çözer "
+        "(ilk vs son kazanır); saldırgan, bir bileşenin doğruladığı ama başka bir bileşenin "
+        "farklı değerlere güvendiği tek bir token üretebilir (parser differential / iddia "
+        "kaçakçılığı)."),
+}
+
+PART_TR = {"header": "başlık", "payload": "yük", "signature": "imza"}
+
+# Active-matrix cell labels and common hover notes.
+MATRIX_TR = {"accept": "kabul", "reject?": "ret?", "VULN": "AÇIK",
+             "rejected": "reddedildi", "skip": "atla"}
+NOTE_TR = {
+    "skipped: secret not in wordlist": "atlandı: sır wordlist'te yok",
+    "secret recovered from wordlist": "sır wordlist'ten kurtarıldı",
+    "could not obtain a baseline token from the server; attacks skipped":
+        "sunucudan temel (baseline) token alınamadı; saldırılar atlandı",
+}
+
+
+def is_tr() -> bool:
+    return st.session_state.get("lang", "tr") == "tr"
+
+
+def loc_finding(f):
+    """Return (title, explanation, part) localized for the current language."""
+    if not is_tr():
+        return f.title, f.explanation, f.part
+    ttl, expl = FIND_TR.get(f.title, (f.title, f.explanation))
+    return ttl, expl, PART_TR.get(f.part, f.part)
+
+
+def mlabel(txt: str) -> str:
+    return MATRIX_TR.get(txt, txt) if is_tr() else txt
+
+
+def mnote(note: str) -> str:
+    return NOTE_TR.get(note, note) if is_tr() else note
 
 
 CSS = """
@@ -421,12 +539,13 @@ def render_findings(findings):
     severity_chart(counts)
     st.write("")
     for f in findings:
+        ttl, expl, part = loc_finding(f)
         ev = (f"<span class='tg-ev'>{html.escape(f.evidence)}</span>") if f.evidence else ""
         st.markdown(
             f"<div class='tg-finding' style='border-left:4px solid {SEV_COLOR.get(str(f.severity), GREY)}'>"
-            f"<div>{badge(str(f.severity))} &nbsp;<b>{html.escape(f.title)}</b> &nbsp;"
-            f"<span class='tg-rule'>{f.rule_id}</span> &nbsp;<span class='tg-part'>{f.part}</span></div>"
-            f"<div class='tg-body'>{html.escape(f.explanation)}</div>{ev}</div>",
+            f"<div>{badge(str(f.severity))} &nbsp;<b>{html.escape(ttl)}</b> &nbsp;"
+            f"<span class='tg-rule'>{f.rule_id}</span> &nbsp;<span class='tg-part'>{html.escape(part)}</span></div>"
+            f"<div class='tg-body'>{html.escape(expl)}</div>{ev}</div>",
             unsafe_allow_html=True)
 
 
@@ -577,15 +696,17 @@ def active_matrix(results):
 
     def td(r):
         if r is None or r.status is None:
-            return "<td style='background:#343a46;color:#9aa4b2'>–<span class='s'>skip</span></td>"
-        note = html.escape(r.note) if r.note else ""
+            note = f" title='{html.escape(mnote(r.note))}'" if r is not None and r.note else ""
+            return (f"<td style='background:#343a46;color:#9aa4b2'{note}>–"
+                    f"<span class='s'>{mlabel('skip')}</span></td>")
+        note = html.escape(mnote(r.note)) if r.note else ""
         if r.expected_accept:
             bg, txt = (GREEN, "accept") if r.accepted else (AMBER, "reject?")
         elif r.vulnerable:
             bg, txt = RED, "VULN"
         else:
             bg, txt = GREEN, "rejected"
-        return (f"<td style='background:{bg}' title='{note}'>{txt}"
+        return (f"<td style='background:{bg}' title='{note}'>{mlabel(txt)}"
                 f"<span class='s'>{r.status}</span></td>")
 
     head = "".join(f"<th>{a.replace('_', ' ')}</th>" for a in attacks)
