@@ -1,6 +1,7 @@
 """TokenGuard control panel (Streamlit).
 
-A visual dashboard to run and watch every part of TokenGuard:
+A visual dashboard to run and watch every part of TokenGuard, with an in-app
+Turkish/English language switch and explanatory text throughout:
   * Overview with a one-click "run all" summary
   * Static analysis of a pasted JWT, with severity badges and an ordered chart
   * Active testing against the local vulnerable server (endpoint x attack matrix)
@@ -37,18 +38,259 @@ GREEN, RED, AMBER, GREY = "#2b8a5a", "#c92a2a", "#b8860b", "#343a46"
 SAMPLE_NONE = ("eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0."
                "eyJzdWIiOiJhbGljZSIsInJvbGUiOiJhZG1pbiJ9.")
 
-# Lab servers the panel can launch. key -> (label, command, base, health path)
+# Lab servers the panel can launch. key -> (command, base, health path)
 SERVERS = {
-    "vuln": ("Vulnerable server :5000", [sys.executable, str(ROOT / "vuln_server" / "app.py")],
+    "vuln": ([sys.executable, str(ROOT / "vuln_server" / "app.py")],
              "http://127.0.0.1:5000", "/endpoints"),
-    "mcp_secure": ("MCP secure :7000",
-                   [sys.executable, str(ROOT / "mcp_server" / "server.py"), "--port", "7000"],
+    "mcp_secure": ([sys.executable, str(ROOT / "mcp_server" / "server.py"), "--port", "7000"],
                    "http://127.0.0.1:7000", "/.well-known/oauth-protected-resource"),
-    "mcp_insecure": ("MCP misconfigured :7001",
-                     [sys.executable, str(ROOT / "mcp_server" / "server.py"),
+    "mcp_insecure": ([sys.executable, str(ROOT / "mcp_server" / "server.py"),
                       "--insecure", "--port", "7001"],
                      "http://127.0.0.1:7001", "/.well-known/oauth-protected-resource"),
 }
+
+# ----------------------------------------------------------------- translations
+
+STR = {
+    "subtitle": {"tr": "JWT Güvenlik Analizi — Kontrol Paneli",
+                 "en": "JWT Security Analysis — Control Panel"},
+    # sidebar
+    "sidebar_servers": {"tr": "Lab sunucuları", "en": "Lab servers"},
+    "running": {"tr": "çalışıyor", "en": "running"},
+    "stopped": {"tr": "durduruldu", "en": "stopped"},
+    "start": {"tr": "Başlat", "en": "Start"},
+    "stop": {"tr": "Durdur", "en": "Stop"},
+    "servers_caption": {"tr": "Sunucular yalnızca 127.0.0.1 üzerinde, yerel test için çalışır.",
+                        "en": "Servers run only on 127.0.0.1 for local testing."},
+    "srv_vuln": {"tr": "Zafiyetli sunucu :5000", "en": "Vulnerable server :5000"},
+    "srv_mcp_secure": {"tr": "MCP güvenli :7000", "en": "MCP secure :7000"},
+    "srv_mcp_insecure": {"tr": "MCP hatalı yapılandırılmış :7001",
+                         "en": "MCP misconfigured :7001"},
+    # tabs
+    "tab_overview": {"tr": "Genel Bakış", "en": "Overview"},
+    "tab_static": {"tr": "Statik Analiz", "en": "Static analysis"},
+    "tab_active": {"tr": "Aktif Test", "en": "Active testing"},
+    "tab_mcp": {"tr": "MCP Vaka Çalışması", "en": "MCP case study"},
+    "tab_eval": {"tr": "Değerlendirme", "en": "Evaluation"},
+    # overview
+    "ov_intro": {
+        "tr": "Bu panodan TokenGuard'ın tüm parçalarını çalıştırıp sonuçları görebilirsin. "
+              "Soldaki menüden lab sunucularını başlat/durdur; aşağıdaki **Tüm testleri "
+              "çalıştır** düğmesi açık olan sunuculara karşı her şeyi tek tıkla çalıştırır.",
+        "en": "This panel runs and shows every part of TokenGuard. Start/stop the lab "
+              "servers in the sidebar; the **Run all tests** button below runs everything "
+              "against whichever servers are up, in one click."},
+    "ov_server_status": {"tr": "Lab sunucu durumu", "en": "Lab server status"},
+    "ov_summary": {"tr": "Tek tıkla özet", "en": "One-click summary"},
+    "ov_summary_caption": {
+        "tr": "Açık olan lab sunucularına karşı aktif testleri, iki MCP probe'unu ve "
+              "değerlendirmeyi çalıştırıp sonuçları özetler.",
+        "en": "Runs active tests, both MCP probes, and the evaluation against whichever "
+              "lab servers are up, then summarizes the results."},
+    "ov_run_all": {"tr": "▶  Tüm testleri çalıştır", "en": "▶  Run all tests"},
+    "ov_spinner": {"tr": "Tüm testler çalışıyor...", "en": "Running all tests..."},
+    "ov_last_run": {"tr": "Son çalışma: {ts}", "en": "Last run at {ts}"},
+    "m_active_flaws": {"tr": "Bulunan aktif açık", "en": "Active flaws found"},
+    "m_mcp_secure": {"tr": "MCP güvenli — açık", "en": "MCP secure vulns"},
+    "m_mcp_misconfig": {"tr": "MCP hatalı — açık", "en": "MCP misconfig vulns"},
+    "m_recall": {"tr": "Tespit duyarlılığı (all)", "en": "Detection recall (all)"},
+    "ov_skipped": {"tr": "Bazı sunucular kapalı olduğu için atlandı: {names}",
+                   "en": "Some servers were stopped, so parts were skipped: {names}"},
+    "ov_tabs_expander": {"tr": "Her sekme ne işe yarar?", "en": "What each tab does"},
+    "ov_tabs_body": {
+        "tr": "- **Statik Analiz** — Bir JWT yapıştır; araç imzayı doğrulamadan çözüp "
+              "güvenlik kurallarından geçirir ve bulguları önem derecesine göre listeler.\n"
+              "- **Aktif Test** — Zafiyetli yerel sunucuya elde üretilmiş saldırı token'ları "
+              "gönderir; matris her endpoint'in hangi saldırıyı kabul ettiğini gösterir.\n"
+              "- **MCP Vaka Çalışması** — OAuth 2.1 korumalı MCP sunucusunun yetkilendirme "
+              "kurallarını (401 challenge, metadata keşfi, audience binding, expiry) dener.\n"
+              "- **Değerlendirme** — Etiketli veri kümesinde precision/recall/F1 ve "
+              "jwt_tool ile kıyaslama.",
+        "en": "- **Static analysis** — paste a JWT; the tool decodes it without trusting the "
+              "signature, runs the rules, and lists findings by severity.\n"
+              "- **Active testing** — sends crafted tokens to the local vulnerable server; "
+              "the matrix shows which attacks each endpoint accepts.\n"
+              "- **MCP case study** — probes the OAuth 2.1 MCP server's authorization rules "
+              "(401 challenge, metadata discovery, audience binding, expiry).\n"
+              "- **Evaluation** — precision/recall/F1 on a labeled dataset and the jwt_tool "
+              "baseline."},
+    # static
+    "st_title": {"tr": "Bir JWT'yi analiz et", "en": "Analyze a JWT"},
+    "st_intro": {
+        "tr": "JWT'yi yapıştır. Araç onu **imzasını doğrulamadan** çözer (güvensiz token'ları "
+              "da incelemek için) ve seçtiğin kural gruplarından geçirir. Bulgular, önem "
+              "derecesi · başlık · kural kimliği · etkilenen bölüm ve maskeli kanıt ile gösterilir.",
+        "en": "Paste a JWT. The tool decodes it **without verifying the signature** (so it can "
+              "inspect insecure tokens) and runs the selected rule groups. Each finding shows "
+              "its severity, title, rule id, affected part, and masked evidence."},
+    "st_groups": {"tr": "Kural grupları", "en": "Rule groups"},
+    "st_groups_help": {
+        "tr": "algorithm = imza algoritması sorunları (none/eksik/bilinmeyen/beklenmeyen, "
+              "jwk/jku/x5u/kid) · claims = exp/aud/iss, ömür, nbf, hassas veri · "
+              "weak_key = wordlist ile zayıf HMAC anahtarı kurtarma.",
+        "en": "algorithm = signing-algorithm issues (none/missing/unknown/unexpected, "
+              "jwk/jku/x5u/kid) · claims = exp/aud/iss, lifetime, nbf, sensitive data · "
+              "weak_key = recover a weak HMAC key from the wordlist."},
+    "st_maxlife": {"tr": "Maksimum token ömrü (saat)", "en": "Max token lifetime (hours)"},
+    "st_maxlife_help": {
+        "tr": "Bu süreden daha uzun ömürlü token'lar 'aşırı ömür' (LONG_LIFETIME) olarak işaretlenir.",
+        "en": "Tokens valid longer than this are flagged as excessive lifetime (LONG_LIFETIME)."},
+    "st_expected": {"tr": "Beklenen algoritmalar (virgülle, opsiyonel)",
+                    "en": "Expected algorithms (comma-separated, optional)"},
+    "st_expected_help": {
+        "tr": "Uygulamanın kabul ettiği algoritmalar. Örn. 'RS256' girip HS256 token verirsen, "
+              "beklenmeyen algoritma (ALG_UNEXPECTED — algoritma karışıklığı) yakalanır.",
+        "en": "The algorithms your app accepts. E.g. enter 'RS256' and pass an HS256 token to "
+              "catch an unexpected algorithm (ALG_UNEXPECTED — algorithm confusion)."},
+    "st_token": {"tr": "Token", "en": "Token"},
+    "st_load_sample": {"tr": "Örnek yükle (alg=none)", "en": "Load sample (alg=none)"},
+    "st_parse_err": {"tr": "Token çözülemedi: {err}", "en": "Could not parse token: {err}"},
+    "st_header": {"tr": "Başlık (header)", "en": "Header"},
+    "st_payload": {"tr": "Yük (payload)", "en": "Payload"},
+    "st_findings": {"tr": "Bulgular ({n})", "en": "Findings ({n})"},
+    "st_no_issues": {"tr": "Sorun bulunamadı.", "en": "No issues found."},
+    "st_download_findings": {"tr": "Bulguları indir (JSON)", "en": "Download findings (JSON)"},
+    "sev_expander": {"tr": "Önem dereceleri ne anlama gelir?",
+                     "en": "What the severity levels mean"},
+    "sev_body": {
+        "tr": "- **CRITICAL** — Doğrudan sömürülebilir, token sahtekârlığına yol açar "
+              "(ör. alg=none, kırılmış zayıf anahtar).\n"
+              "- **HIGH** — Ciddi zayıflık (ör. exp yok, gömülü jwk, hassas veri).\n"
+              "- **MEDIUM** — Kötüye kullanılabilir yanlış yapılandırma (ör. expired kabulü, "
+              "aud yok, kid enjeksiyonu).\n"
+              "- **LOW** — Küçük zayıflık (ör. iss yok).\n"
+              "- **INFO** — Bilgilendirme (ör. nbf gelecekte).",
+        "en": "- **CRITICAL** — directly exploitable, enables token forgery "
+              "(e.g. alg=none, a cracked weak key).\n"
+              "- **HIGH** — serious weakness (e.g. no exp, embedded jwk, sensitive data).\n"
+              "- **MEDIUM** — abusable misconfiguration (e.g. accepting expired, no aud, "
+              "kid injection).\n"
+              "- **LOW** — minor weakness (e.g. no iss).\n"
+              "- **INFO** — informational (e.g. nbf in the future)."},
+    # active
+    "act_title": {"tr": "Zafiyetli sunucuya karşı aktif test",
+                  "en": "Active testing against the vulnerable server"},
+    "act_intro": {
+        "tr": "Araç, elde üretilmiş saldırı token'larını yerel zafiyetli sunucuya gönderir ve "
+              "her endpoint'in hangi saldırıyı kabul/ret ettiğini kaydeder. Yalnızca 127.0.0.1 "
+              "hedeflenebilir.",
+        "en": "The tool sends crafted attack tokens to the local vulnerable server and records "
+              "which attacks each endpoint accepts or rejects. Only 127.0.0.1 may be targeted."},
+    "act_server_running": {"tr": "sunucu çalışıyor", "en": "server running"},
+    "act_server_stopped": {"tr": "sunucu kapalı — soldaki menüden başlat",
+                           "en": "server stopped — start it from the sidebar"},
+    "act_target": {"tr": "Hedef (yalnızca localhost)", "en": "Target (localhost only)"},
+    "act_secret": {"tr": "Bilinen HMAC sırrı (opsiyonel)", "en": "Known HMAC secret (optional)"},
+    "act_secret_help": {
+        "tr": "Biliniyorsa, zayıf anahtarla imzalı sahte (forged) token üretip sunucunun kabul "
+              "edip etmediğini test etmek için kullanılır.",
+        "en": "If known, used to forge a token signed with the weak key and test whether the "
+              "server accepts it."},
+    "act_run": {"tr": "Aktif testleri çalıştır", "en": "Run active tests"},
+    "act_matrix_legend": {
+        "tr": "🟥 VULN = güvensiz token kabul edildi · 🟩 = doğru davranış (ret/kabul) · "
+              "– = atlandı · küçük sayı = HTTP durum kodu · hücrenin üzerine gel → not.",
+        "en": "🟥 VULN = insecure token accepted · 🟩 = correct behavior · – = skipped · "
+              "small number = HTTP status · hover a cell for its note."},
+    "act_flaws_title": {"tr": "Endpoint başına tespit edilen açıklar",
+                        "en": "Detected flaws per endpoint"},
+    "act_no_flaws": {"tr": "açık tespit edilmedi", "en": "no flaws detected"},
+    "act_download": {"tr": "Sonuçları indir (JSON)", "en": "Download results (JSON)"},
+    "act_attacks_expander": {"tr": "Saldırı türleri nedir?", "en": "What the attack types mean"},
+    "act_attacks_body": {
+        "tr": "- **NO TOKEN** — Token olmadan istek; korumalı endpoint reddetmeli.\n"
+              "- **BASELINE VALID** — Geçerli token; kabul edilmeli (temel doğrulama).\n"
+              "- **ALG NONE** — İmzasız (alg=none) token; reddedilmeli.\n"
+              "- **TAMPERED SIGNATURE** — İmzası bozulmuş token; reddedilmeli.\n"
+              "- **EXPIRED TOKEN** — Süresi dolmuş token; reddedilmeli.\n"
+              "- **WRONG AUDIENCE** — Başka servise ait token; reddedilmeli.\n"
+              "- **WEAK KEY FORGERY** — Kırılan zayıf anahtarla imzalanmış sahte token; reddedilmeli.",
+        "en": "- **NO TOKEN** — request with no token; a protected endpoint must reject.\n"
+              "- **BASELINE VALID** — a valid token; must be accepted (sanity check).\n"
+              "- **ALG NONE** — an unsigned (alg=none) token; must be rejected.\n"
+              "- **TAMPERED SIGNATURE** — a token with a broken signature; must be rejected.\n"
+              "- **EXPIRED TOKEN** — a past-expiry token; must be rejected.\n"
+              "- **WRONG AUDIENCE** — a token for another service; must be rejected.\n"
+              "- **WEAK KEY FORGERY** — a token forged with the cracked weak key; must be rejected."},
+    # mcp
+    "mcp_title": {"tr": "OAuth 2.1 MCP sunucu vaka çalışması",
+                  "en": "OAuth 2.1 MCP server case study"},
+    "mcp_intro": {
+        "tr": "MCP yetkilendirme spesifikasyonuna (OAuth 2.1 + RFC 9728) göre yerel MCP "
+              "sunucusunu dener: kimliksiz 401 challenge, korumalı-kaynak metadata keşfi, "
+              "**audience binding** (başka kaynağa ait token reddedilmeli — confused-deputy) "
+              "ve süre (expiry) kontrolü.",
+        "en": "Probes the local MCP server per the MCP authorization spec (OAuth 2.1 + "
+              "RFC 9728): the unauthenticated 401 challenge, protected-resource metadata "
+              "discovery, **audience binding** (a token for another resource must be rejected "
+              "— confused-deputy), and expiry."},
+    "mcp_target": {"tr": "MCP sunucusu (yalnızca localhost)", "en": "MCP server (localhost only)"},
+    "mcp_run": {"tr": "MCP probe çalıştır", "en": "Run MCP probe"},
+    "mcp_vulns": {"tr": "Zafiyetler: {v}", "en": "Vulnerabilities: {v}"},
+    "mcp_no_vulns": {"tr": "Yetkilendirme zafiyeti tespit edilmedi.",
+                     "en": "No authorization vulnerabilities detected."},
+    "mcp_checks_expander": {"tr": "Kontroller ne anlama gelir?", "en": "What the checks mean"},
+    "mcp_checks_body": {
+        "tr": "- **PASS** — Sunucu bu kuralda doğru davrandı.\n"
+              "- **FAIL** — Beklenen davranış görülmedi (ama net bir zafiyet etiketi yok).\n"
+              "- **Zafiyet etiketi** (ör. AUDIENCE binding) — Sunucu güvenlik kuralını ihlal "
+              "ediyor; güvenli varyant hepsini geçer, hatalı varyant audience kontrolünü atlar.",
+        "en": "- **PASS** — the server behaved correctly for this rule.\n"
+              "- **FAIL** — the expected behavior was not observed (no specific vuln label).\n"
+              "- **Vulnerability label** (e.g. AUDIENCE binding) — the server breaks a security "
+              "rule; the secure variant passes all, the misconfigured one skips audience checks."},
+    # evaluation
+    "ev_title": {"tr": "Tespit değerlendirmesi", "en": "Detection evaluation"},
+    "ev_intro": {
+        "tr": "Etiketli bir veri kümesi üzerinde TokenGuard'ın tespitini ölçer. İki "
+              "konfigürasyon karşılaştırılır: **basic** (zayıf-anahtar tespiti hariç) ve "
+              "**all** (dahil). İsteğe bağlı olarak harici jwt_tool ile kafa kafaya kıyas yapılır.",
+        "en": "Measures TokenGuard's detection on a labeled dataset. It compares two "
+              "configurations: **basic** (without weak-key detection) and **all** (with it), "
+              "and optionally benchmarks head-to-head against the external jwt_tool."},
+    "ev_jwt_tool": {"tr": "jwt_tool.py yolu (opsiyonel, baseline için)",
+                    "en": "jwt_tool.py path (optional, for baseline)"},
+    "ev_run": {"tr": "Veri kümesini üret & değerlendir", "en": "Generate dataset & evaluate"},
+    "ev_dataset": {"tr": "Veri kümesi: {n} token ({pos} güvensiz, {neg} güvenli)",
+                   "en": "Dataset: {n} tokens ({pos} insecure, {neg} secure)"},
+    "ev_h2h": {"tr": "Ortak kontrollerde kafa kafaya: {labels}",
+               "en": "Head-to-head on {labels}"},
+    "ev_jwt_notfound": {"tr": "jwt_tool o yolda bulunamadı.",
+                        "en": "jwt_tool not found at that path."},
+    "ev_jwt_hint": {"tr": "Baseline kıyaslaması için yukarıya bir jwt_tool.py yolu gir.",
+                    "en": "Provide a jwt_tool.py path above to add the baseline comparison."},
+    "ev_metrics_expander": {"tr": "Metrikler ne anlama gelir?", "en": "What the metrics mean"},
+    "ev_metrics_body": {
+        "tr": "- **precision (kesinlik)** — İşaretlenenlerin ne kadarı gerçekten doğru. "
+              "Düşükse yanlış alarm çoktur.\n"
+              "- **recall (duyarlılık)** — Gerçek sorunların ne kadarı yakalandı. Düşükse "
+              "kaçırma çoktur.\n"
+              "- **F1** — precision ve recall'ın harmonik ortalaması (tek skor).\n"
+              "- **FP** — yanlış pozitif (temiz token'da uydurulan bulgu).\n"
+              "- **FN** — yanlış negatif (kaçırılan gerçek sorun).\n\n"
+              "`basic` zayıf anahtarları kaçırdığı için recall'ı düşüktür; `all` weak_key "
+              "ekleyerek tam kapsama ulaşır.",
+        "en": "- **precision** — of everything flagged, how much was really correct. Low = "
+              "many false alarms.\n"
+              "- **recall** — of all real problems, how many were caught. Low = many misses.\n"
+              "- **F1** — the harmonic mean of precision and recall (one score).\n"
+              "- **FP** — false positives (a finding invented on a clean token).\n"
+              "- **FN** — false negatives (a real problem missed).\n\n"
+              "`basic` has lower recall because it misses weak keys; `all` adds weak_key for "
+              "full coverage."},
+    "lang_label": {"tr": "🌐 Dil / Language", "en": "🌐 Language / Dil"},
+}
+
+
+def t(key: str, **fmt) -> str:
+    lang = st.session_state.get("lang", "tr")
+    s = STR[key].get(lang, STR[key]["en"])
+    return s.format(**fmt) if fmt else s
+
+
+def server_label(key: str) -> str:
+    return t(f"srv_{key}")
+
 
 CSS = """
 <style>
@@ -94,14 +336,14 @@ def _ping(base: str, path: str) -> bool:
 
 
 def is_up(key: str) -> bool:
-    _, _, base, path = SERVERS[key]
+    _, base, path = SERVERS[key]
     return _ping(base, path)
 
 
 def start_server(key: str):
     if is_up(key):
         return
-    _, cmd, _, _ = SERVERS[key]
+    cmd, _, _ = SERVERS[key]
     proc = subprocess.Popen(cmd, cwd=str(ROOT), stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
     st.session_state.setdefault("procs", {})[key] = proc
@@ -123,20 +365,21 @@ def stop_server(key: str):
 
 
 def server_controls():
-    st.sidebar.header("Lab servers")
-    for key, (label, _, _, _) in SERVERS.items():
+    st.sidebar.header(t("sidebar_servers"))
+    for key in SERVERS:
         up = is_up(key)
         color = GREEN if up else "#555c68"
         st.sidebar.markdown(
-            f"<span class='tg-dot' style='background:{color}'></span><b>{label}</b>  "
-            f"<span style='color:#8e99ab;font-size:0.8em'>{'running' if up else 'stopped'}</span>",
+            f"<span class='tg-dot' style='background:{color}'></span><b>{server_label(key)}</b>  "
+            f"<span style='color:#8e99ab;font-size:0.8em'>"
+            f"{t('running') if up else t('stopped')}</span>",
             unsafe_allow_html=True)
         c1, c2 = st.sidebar.columns(2)
-        c1.button("Start", key=f"start_{key}", disabled=up,
+        c1.button(t("start"), key=f"start_{key}", disabled=up,
                   on_click=start_server, args=(key,), use_container_width=True)
-        c2.button("Stop", key=f"stop_{key}", disabled=not up,
+        c2.button(t("stop"), key=f"stop_{key}", disabled=not up,
                   on_click=stop_server, args=(key,), use_container_width=True)
-    st.sidebar.caption("Servers run only on 127.0.0.1 for local testing.")
+    st.sidebar.caption(t("servers_caption"))
 
 
 # ----------------------------------------------------------------- widgets
@@ -191,19 +434,25 @@ def render_findings(findings):
 
 st.set_page_config(page_title="TokenGuard", page_icon="🛡️", layout="wide")
 st.markdown(CSS, unsafe_allow_html=True)
+
+# Language switch (must run before any t() below)
+_lang_choice = st.sidebar.radio(STR["lang_label"]["tr"], ["Türkçe", "English"],
+                                key="lang_choice", horizontal=True)
+st.session_state["lang"] = "tr" if _lang_choice == "Türkçe" else "en"
+st.sidebar.divider()
+
 st.markdown(
-    "<div class='tg-header'><h1>🛡️ TokenGuard</h1>"
-    "<p>JWT Security Analysis — Control Panel</p></div>", unsafe_allow_html=True)
+    f"<div class='tg-header'><h1>🛡️ TokenGuard</h1>"
+    f"<p>{t('subtitle')}</p></div>", unsafe_allow_html=True)
 server_controls()
 
 tab_dash, tab_static, tab_active, tab_mcp, tab_eval = st.tabs(
-    ["Overview", "Static analysis", "Active testing", "MCP case study", "Evaluation"])
+    [t("tab_overview"), t("tab_static"), t("tab_active"), t("tab_mcp"), t("tab_eval")])
 
 
 # ================================================================= Overview
 def run_all():
     out = {}
-    # Active testing
     if is_up("vuln"):
         from tokenguard.active.runner import HttpClient, run_active_tests, summarize
         try:
@@ -212,7 +461,6 @@ def run_all():
             out["active"] = {"flaws": flaws, "endpoints": len(summarize(res))}
         except Exception as exc:  # noqa: BLE001
             out["active_error"] = str(exc)
-    # MCP probes
     from tokenguard.mcp_probe import run_mcp_probe, vulnerabilities
     for key, port in (("mcp_secure", 7000), ("mcp_insecure", 7001)):
         if is_up(key):
@@ -221,11 +469,10 @@ def run_all():
                 out[key] = {"vulns": len(vulnerabilities(res))}
             except Exception as exc:  # noqa: BLE001
                 out[f"{key}_error"] = str(exc)
-    # Evaluation
     try:
         import dataset.generate as gen
         from evaluation.evaluate import CONFIGS, LABELED, load, score, tokenguard_ids
-        gen.main()
+        gen.main([])
         records = load()
         s = score(records, lambda rec: tokenguard_ids(rec, CONFIGS["all"]), LABELED)
         out["eval"] = {"recall": s["recall"], "precision": s["precision"],
@@ -237,87 +484,86 @@ def run_all():
 
 
 with tab_dash:
-    st.subheader("Lab server status")
+    st.info(t("ov_intro"))
+    st.subheader(t("ov_server_status"))
     cols = st.columns(len(SERVERS))
-    for col, (key, (label, _, _, _)) in zip(cols, SERVERS.items()):
+    for col, key in zip(cols, SERVERS):
         up = is_up(key)
-        col.markdown(metric_card("running" if up else "stopped", label,
+        col.markdown(metric_card(t("running") if up else t("stopped"), server_label(key),
                                  GREEN if up else "#868e96"), unsafe_allow_html=True)
 
     st.write("")
-    st.subheader("One-click summary")
-    st.caption("Runs active tests, both MCP probes, and the evaluation against whichever "
-               "lab servers are up, then summarizes the results.")
-    if st.button("▶  Run all tests", type="primary"):
-        with st.spinner("Running all tests..."):
+    st.subheader(t("ov_summary"))
+    st.caption(t("ov_summary_caption"))
+    if st.button(t("ov_run_all"), type="primary"):
+        with st.spinner(t("ov_spinner")):
             st.session_state["runall"] = run_all()
 
     summary = st.session_state.get("runall")
     if summary:
-        st.caption(f"Last run at {summary['_ts']}")
+        st.caption(t("ov_last_run", ts=summary["_ts"]))
         c = st.columns(4)
         active = summary.get("active")
         c[0].markdown(metric_card(
-            active["flaws"] if active else "—", "Active flaws found",
+            active["flaws"] if active else "—", t("m_active_flaws"),
             RED if active and active["flaws"] else GREEN), unsafe_allow_html=True)
         ms = summary.get("mcp_secure")
         c[1].markdown(metric_card(
-            ms["vulns"] if ms else "—", "MCP secure vulns",
+            ms["vulns"] if ms else "—", t("m_mcp_secure"),
             RED if ms and ms["vulns"] else GREEN), unsafe_allow_html=True)
         mi = summary.get("mcp_insecure")
         c[2].markdown(metric_card(
-            mi["vulns"] if mi else "—", "MCP misconfig vulns",
+            mi["vulns"] if mi else "—", t("m_mcp_misconfig"),
             RED if mi and mi["vulns"] else "#868e96"), unsafe_allow_html=True)
         ev = summary.get("eval")
         c[3].markdown(metric_card(
-            f"{ev['recall']:.2f}" if ev else "—", "Detection recall (all)",
+            f"{ev['recall']:.2f}" if ev else "—", t("m_recall"),
             "#4dabf7"), unsafe_allow_html=True)
         downs = [k for k in ("vuln", "mcp_secure", "mcp_insecure") if not is_up(k)]
         if downs:
-            st.info("Some servers were stopped, so parts were skipped: "
-                    + ", ".join(SERVERS[k][0] for k in downs))
+            st.info(t("ov_skipped", names=", ".join(server_label(k) for k in downs)))
 
     st.write("")
-    with st.expander("What each tab does"):
-        st.markdown(
-            "- **Static analysis** — paste a JWT and see findings by severity.\n"
-            "- **Active testing** — send crafted tokens to the vulnerable server; the "
-            "matrix shows which attacks each endpoint accepts.\n"
-            "- **MCP case study** — probe the OAuth 2.1 MCP server's authorization rules.\n"
-            "- **Evaluation** — precision/recall/F1 and the jwt_tool baseline.")
+    with st.expander(t("ov_tabs_expander")):
+        st.markdown(t("ov_tabs_body"))
 
 
 # ================================================================= Static
 with tab_static:
-    st.subheader("Analyze a JWT")
-    groups = st.multiselect("Rule groups", list(ALL_GROUPS), default=list(ALL_GROUPS))
+    st.subheader(t("st_title"))
+    st.info(t("st_intro"))
+    groups = st.multiselect(t("st_groups"), list(ALL_GROUPS), default=list(ALL_GROUPS),
+                            help=t("st_groups_help"))
     cc1, cc2 = st.columns(2)
-    max_life_h = cc1.number_input("Max token lifetime (hours)", 1, 8760, 24)
-    expected = cc2.text_input("Expected algorithms (comma-separated, optional)", "")
+    max_life_h = cc1.number_input(t("st_maxlife"), 1, 8760, 24, help=t("st_maxlife_help"))
+    expected = cc2.text_input(t("st_expected"), "", help=t("st_expected_help"))
 
-    token = st.text_area("Token", height=120, placeholder="eyJ...", key="tok")
-    st.button("Load sample (alg=none)",
+    token = st.text_area(t("st_token"), height=120, placeholder="eyJ...", key="tok")
+    st.button(t("st_load_sample"),
               on_click=lambda: st.session_state.update(tok=SAMPLE_NONE))
+
+    with st.expander(t("sev_expander")):
+        st.markdown(t("sev_body"))
 
     if token.strip():
         try:
             parsed = parse_token(token)
         except TokenParseError as exc:
-            st.error(f"Could not parse token: {exc}")
+            st.error(t("st_parse_err", err=exc))
         else:
             cfg = AnalysisConfig(
                 max_lifetime_seconds=int(max_life_h) * 3600,
                 expected_algs=[a.strip() for a in expected.split(",") if a.strip()] or None)
             findings = analyze(parsed, groups=groups or list(ALL_GROUPS), config=cfg)
             left, right = st.columns(2)
-            left.caption("Header"); left.json(parsed.header)
-            right.caption("Payload"); right.json(parsed.payload)
-            st.subheader(f"Findings ({len(findings)})")
+            left.caption(t("st_header")); left.json(parsed.header)
+            right.caption(t("st_payload")); right.json(parsed.payload)
+            st.subheader(t("st_findings", n=len(findings)))
             if not findings:
-                st.success("No issues found.")
+                st.success(t("st_no_issues"))
             else:
                 render_findings(findings)
-                st.download_button("Download findings (JSON)",
+                st.download_button(t("st_download_findings"),
                                    json.dumps([f.to_dict() for f in findings], indent=2),
                                    file_name="tokenguard_findings.json")
 
@@ -352,16 +598,19 @@ def active_matrix(results):
 
 
 with tab_active:
-    st.subheader("Active testing against the vulnerable server")
+    st.subheader(t("act_title"))
+    st.info(t("act_intro"))
     up = is_up("vuln")
     dot = GREEN if up else "#555c68"
     st.markdown(f"<span class='tg-dot' style='background:{dot}'></span>"
-                + ("server running" if up else
-                   "server stopped — start it from the sidebar"), unsafe_allow_html=True)
-    target = st.text_input("Target (localhost only)", "http://127.0.0.1:5000")
-    secret = st.text_input("Known HMAC secret (optional)", "")
-    if st.button("Run active tests", disabled=not up, type="primary"):
-        from tokenguard.active.runner import HttpClient, run_active_tests, summarize
+                + (t("act_server_running") if up else t("act_server_stopped")),
+                unsafe_allow_html=True)
+    target = st.text_input(t("act_target"), "http://127.0.0.1:5000")
+    secret = st.text_input(t("act_secret"), "", help=t("act_secret_help"))
+    with st.expander(t("act_attacks_expander")):
+        st.markdown(t("act_attacks_body"))
+    if st.button(t("act_run"), disabled=not up, type="primary"):
+        from tokenguard.active.runner import HttpClient, run_active_tests
         try:
             st.session_state["active_res"] = run_active_tests(
                 client=HttpClient(target), secret=secret or None)
@@ -373,29 +622,31 @@ with tab_active:
     if results:
         from tokenguard.active.runner import summarize
         active_matrix(results)
-        st.caption("🟥 VULN = insecure token accepted · 🟩 = correct behavior · "
-                   "small number = HTTP status · hover a cell for its note")
-        st.subheader("Detected flaws per endpoint")
+        st.caption(t("act_matrix_legend"))
+        st.subheader(t("act_flaws_title"))
         for ep, flaws in summarize(results).items():
             icon = "🔴" if flaws else "🟢"
-            st.write(f"{icon} **{ep}** → {', '.join(flaws) if flaws else 'no flaws detected'}")
-        st.download_button("Download results (JSON)",
+            st.write(f"{icon} **{ep}** → {', '.join(flaws) if flaws else t('act_no_flaws')}")
+        st.download_button(t("act_download"),
                            json.dumps([r.to_dict() for r in results], indent=2),
                            file_name="tokenguard_active_results.json")
 
 
 # ================================================================= MCP
 with tab_mcp:
-    st.subheader("OAuth 2.1 MCP server case study")
+    st.subheader(t("mcp_title"))
+    st.info(t("mcp_intro"))
     c1, c2 = st.columns(2)
     for col, key in ((c1, "mcp_secure"), (c2, "mcp_insecure")):
         up = is_up(key)
         col.markdown(f"<span class='tg-dot' style='background:{GREEN if up else '#555c68'}'>"
-                     f"</span>{SERVERS[key][0]} — {'running' if up else 'stopped'}",
+                     f"</span>{server_label(key)} — {t('running') if up else t('stopped')}",
                      unsafe_allow_html=True)
-    mcp_target = st.text_input("MCP server (localhost only)", "http://127.0.0.1:7000")
-    if st.button("Run MCP probe", type="primary"):
-        from tokenguard.mcp_probe import run_mcp_probe, vulnerabilities
+    mcp_target = st.text_input(t("mcp_target"), "http://127.0.0.1:7000")
+    with st.expander(t("mcp_checks_expander")):
+        st.markdown(t("mcp_checks_body"))
+    if st.button(t("mcp_run"), type="primary"):
+        from tokenguard.mcp_probe import run_mcp_probe
         try:
             st.session_state["mcp_res"] = run_mcp_probe(mcp_target)
         except Exception as exc:  # noqa: BLE001
@@ -419,25 +670,28 @@ with tab_mcp:
                 unsafe_allow_html=True)
         vulns = vulnerabilities(results)
         if vulns:
-            st.error("Vulnerabilities: " + ", ".join(vulns))
+            st.error(t("mcp_vulns", v=", ".join(vulns)))
         else:
-            st.success("No authorization vulnerabilities detected.")
+            st.success(t("mcp_no_vulns"))
 
 
 # ================================================================= Evaluation
 with tab_eval:
-    st.subheader("Detection evaluation")
-    jwt_tool_path = st.text_input("jwt_tool.py path (optional, for baseline)", "")
-    if st.button("Generate dataset & evaluate", type="primary"):
+    st.subheader(t("ev_title"))
+    st.info(t("ev_intro"))
+    with st.expander(t("ev_metrics_expander")):
+        st.markdown(t("ev_metrics_body"))
+    jwt_tool_path = st.text_input(t("ev_jwt_tool"), "")
+    if st.button(t("ev_run"), type="primary"):
         import dataset.generate as gen
         from evaluation.evaluate import (ALL_GROUPS as EVAL_ALL, CONFIGS, LABELED, load,
                                          score, tokenguard_ids)
         from evaluation.baselines import OVERLAP_LABELS, JwtTool
 
-        gen.main()
+        gen.main([])
         records = load()
         pos = sum(1 for r in records if r["labels"])
-        st.caption(f"Dataset: {len(records)} tokens ({pos} insecure, {len(records) - pos} secure)")
+        st.caption(t("ev_dataset", n=len(records), pos=pos, neg=len(records) - pos))
 
         table = {}
         for name, grp in CONFIGS.items():
@@ -459,7 +713,7 @@ with tab_eval:
 
         jt = JwtTool.locate(jwt_tool_path or None)
         if jt.available:
-            st.subheader(f"Head-to-head on {sorted(OVERLAP_LABELS)}")
+            st.subheader(t("ev_h2h", labels=sorted(OVERLAP_LABELS)))
             tg = score(records, lambda rec: tokenguard_ids(rec, EVAL_ALL), OVERLAP_LABELS)
             bl = score(records, lambda rec: jt.labels(rec["token"]), OVERLAP_LABELS)
             h2h = pd.DataFrame({
@@ -468,6 +722,6 @@ with tab_eval:
             }).T
             st.dataframe(h2h.style.format("{:.3f}"), use_container_width=True)
         elif jwt_tool_path:
-            st.warning("jwt_tool not found at that path.")
+            st.warning(t("ev_jwt_notfound"))
         else:
-            st.caption("Provide a jwt_tool.py path above to add the baseline comparison.")
+            st.caption(t("ev_jwt_hint"))
