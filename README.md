@@ -28,8 +28,9 @@ protected-resource metadata discovery, **audience binding** (a token minted for 
 resource must be rejected — the confused-deputy rule), and expiry. Ships a secure variant
 and a misconfigured one that skips audience validation.
 
-**Evaluation** — a labeled dataset of 84 tokens (68 insecure across every rule, 16 secure
-and boundary negatives) scored under two detection configurations (`basic` without weak-key
+**Evaluation** — a labeled dataset of 100 tokens (78 insecure across every rule, including
+HMAC and asymmetric algorithms and algorithm-confusion downgrades, plus 22 secure and
+boundary negatives) scored under two detection configurations (`basic` without weak-key
 detection, `all` with it) on precision, recall, F1, and false-positive counts, plus an
 optional head-to-head benchmark against the external `jwt_tool` on their shared checks.
 
@@ -88,10 +89,10 @@ tests/             pytest suite (static rules + active mode)
 
 ## Results
 
-On the 84-token labeled dataset, `basic` checks reach recall 0.75 (they miss the weak-key
+On the 100-token labeled dataset, `basic` checks reach recall 0.77 (they miss the weak-key
 labels); adding weak-key detection brings `all` to precision/recall/F1 = 1.0 with no false
-positives, including on the intentionally short-lived and boundary secure tokens.
-On the shared checks
+positives, including on the intentionally short-lived, boundary, and legitimate asymmetric
+secure tokens. On the shared checks
 (`alg=none`, expired, weak key), TokenGuard matches the `jwt_tool` baseline (both 1.0),
 while also covering claim-level issues (`aud`/`iss`/lifetime/sensitive data) that
 jwt_tool does not flag.

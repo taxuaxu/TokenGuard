@@ -38,7 +38,7 @@ CONFIGS = {
 }
 
 # Rule ids the dataset labels (full TokenGuard scoring space).
-LABELED = {"ALG_NONE", "ALG_MISSING", "ALG_UNKNOWN", "SIGNATURE_EMPTY",
+LABELED = {"ALG_NONE", "ALG_MISSING", "ALG_UNKNOWN", "ALG_UNEXPECTED", "SIGNATURE_EMPTY",
            "HEADER_JWK", "HEADER_KEY_URL", "HEADER_KID_INJECTION",
            "MISSING_EXP", "INVALID_EXP", "MISSING_AUD", "MISSING_ISS", "EXPIRED",
            "LONG_LIFETIME", "NOT_YET_VALID", "WEAK_KEY", "SENSITIVE_DATA"}
@@ -53,8 +53,10 @@ def load(path=DATA):
 
 def tokenguard_ids(rec, groups):
     # Analyze against the token's generation time, not the wall clock, so that
-    # time-relative checks (EXPIRED, LONG_LIFETIME) are reproducible.
-    cfg = AnalysisConfig(now=rec.get("now"))
+    # time-relative checks (EXPIRED, LONG_LIFETIME) are reproducible. When a
+    # record pins accepted algorithms, pass them so ALG_UNEXPECTED (algorithm
+    # confusion) is scored the way the target application would see it.
+    cfg = AnalysisConfig(now=rec.get("now"), expected_algs=rec.get("expected_algs"))
     return {f.rule_id for f in analyze(rec["token"], groups=groups, config=cfg)}
 
 

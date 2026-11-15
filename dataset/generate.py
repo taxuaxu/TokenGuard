@@ -52,13 +52,26 @@ def _manual_hs256(header, payload, secret=STRONG):
     return f"{signing_input.decode()}.{sig}"
 
 
+def _unverified(alg, claims, sig_bytes=64):
+    """Build a structurally valid token for an asymmetric algorithm with a
+    placeholder signature. TokenGuard analyzes structure without verifying the
+    signature, so a real key pair is not needed to exercise its rules."""
+    header = {"alg": alg, "typ": "JWT"}
+    sig = base64.urlsafe_b64encode(b"\xa5" * sig_bytes).rstrip(b"=").decode()
+    return f"{_b64(header)}.{_b64(claims)}.{sig}"
+
+
 def records():
     recs = []
     # Record the generation time with each token so the evaluator analyzes it
     # against a fixed reference time, not the wall clock. Otherwise short-lived
     # secure tokens (exp=NOW+60) would flip to EXPIRED when evaluated later.
-    add = lambda token, labels, note: recs.append(
-        {"token": token, "labels": labels, "note": note, "now": NOW})
+    def add(token, labels, note, expected_algs=None):
+        rec = {"token": token, "labels": labels, "note": note, "now": NOW}
+        if expected_algs is not None:
+            # The app pins its accepted algorithms; anything else is rejected.
+            rec["expected_algs"] = expected_algs
+        recs.append(rec)
 
     # ---- secure negative examples (labels = []) ----
     add(_signed(secure_claims()), [], "standard secure HS256")
@@ -248,6 +261,53 @@ def records():
         ["ALG_UNKNOWN", "MISSING_EXP"], "unknown alg + missing exp")
     add(_signed(secure_claims(), secret="secret", headers={"kid": "../../etc/passwd"}),
         ["HEADER_KID_INJECTION", "WEAK_KEY"], "kid traversal + weak key")
+
+    # ======================================================================
+    # Asymmetric algorithms and algorithm confusion
+    # TokenGuard verifies structure, not signatures, so these are built with
+    # placeholder signatures (no RSA/EC key material required).
+    # ======================================================================
+
+    # ---- secure asymmetric negatives (known alg, sound claims) ----
+    add(_unverified("RS256", secure_claims(), sig_bytes=256), [], "secure RS256")
+    add(_unverified("ES256", secure_claims(), sig_bytes=64), [], "secure ES256")
+    add(_unverified("PS256", secure_claims(), sig_bytes=256), [], "secure PS256")
+    add(_unverified("ES384", secure_claims(), sig_bytes=96), [], "secure ES384")
+    add(f"{_b64({'alg': 'EdDSA', 'typ': 'JWT'})}.{_b64(secure_claims())}."
+        f"{base64.urlsafe_b64encode(b'z' * 64).rstrip(b'=').decode()}",
+        [], "secure EdDSA")
+    # pinned to RS256 and matches -> must NOT be flagged
+    add(_unverified("RS256", secure_claims(), sig_bytes=256), [],
+        "RS256, app pins RS256 (matches, must NOT be flagged)", expected_algs=["RS256"])
+
+    # ---- algorithm confusion: app expects an asymmetric alg, attacker downgrades ----
+    add(_signed(secure_claims()), ["ALG_UNEXPECTED"],
+        "RS256-expecting app, token forged as HS256 (classic confusion)",
+        expected_algs=["RS256"])
+    add(_signed(secure_claims(), alg="HS384"), ["ALG_UNEXPECTED"],
+        "RS384-expecting app, token forged as HS384", expected_algs=["RS384"])
+    add(_signed(secure_claims()), ["ALG_UNEXPECTED"],
+        "ES256-expecting app, token forged as HS256", expected_algs=["ES256"])
+    add(_unverified("RS256", secure_claims(), sig_bytes=256), ["ALG_UNEXPECTED"],
+        "app pins ES256 but receives RS256", expected_algs=["ES256"])
+
+    # ---- algorithm confusion combined with other flaws ----
+    add(_signed(secure_claims(iat=NOW - 7200, nbf=NOW - 7200, exp=NOW - 3600)),
+        ["ALG_UNEXPECTED", "EXPIRED"], "confusion (HS256 vs RS256) + expired",
+        expected_algs=["RS256"])
+    c = secure_claims(); c.pop("aud")
+    add(_signed(c, secret="secret"), ["ALG_UNEXPECTED", "MISSING_AUD", "WEAK_KEY"],
+        "confusion + missing aud + weak key", expected_algs=["RS256"])
+
+    # ---- asymmetric tokens with claim-level issues (alg is fine, claims are not) ----
+    c = secure_claims(); c.pop("exp")
+    add(_unverified("RS256", c, sig_bytes=256), ["MISSING_EXP"], "RS256 with no exp")
+    add(_unverified("ES256", secure_claims(exp=NOW - 3600, iat=NOW - 7200, nbf=NOW - 7200),
+                    sig_bytes=64), ["EXPIRED"], "ES256 expired")
+    add(_unverified("RS256", secure_claims(password="pw"), sig_bytes=256),
+        ["SENSITIVE_DATA"], "RS256 with sensitive data")
+    add(_unverified("RS256", secure_claims(exp=NOW + 365 * 86400), sig_bytes=256),
+        ["LONG_LIFETIME"], "RS256 valid for a year")
 
     return recs
 
