@@ -10,7 +10,8 @@ from ..parser import ParsedToken
 
 def _fmt_ts(ts) -> str:
     try:
-        return _dt.datetime.utcfromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M:%S UTC")
+        return _dt.datetime.fromtimestamp(
+            float(ts), _dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     except (TypeError, ValueError, OverflowError, OSError):
         return repr(ts)
 
@@ -96,14 +97,29 @@ SENSITIVE_KEYS = {"password", "passwd", "pwd", "secret", "client_secret", "api_k
                   "apikey", "private_key", "ssn", "credit_card", "card_number"}
 
 
+def _find_sensitive(obj, path=""):
+    """Walk nested dicts/lists and yield (key_path, value) for sensitive keys."""
+    hits = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            kp = f"{path}.{k}" if path else str(k)
+            if isinstance(k, str) and k.lower() in SENSITIVE_KEYS:
+                hits.append((kp, v))
+            hits.extend(_find_sensitive(v, kp))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            hits.extend(_find_sensitive(v, f"{path}[{i}]"))
+    return hits
+
+
 def check_sensitive_data(t: ParsedToken, cfg: AnalysisConfig) -> List[Finding]:
-    hits = [k for k in t.payload if k.lower() in SENSITIVE_KEYS]
+    hits = _find_sensitive(t.payload)
     if hits:
-        shown = ", ".join(f"{k}={mask(t.payload[k])}" for k in hits)
+        shown = ", ".join(f"{kp}={mask(v)}" for kp, v in hits)
         return [Finding(
             "SENSITIVE_DATA", "Sensitive data in payload", "payload", Severity.HIGH,
             "JWT payloads are only Base64URL-encoded, not encrypted. Anyone holding the token "
-            "can read these values.",
+            "can read these values (nested fields included).",
             evidence=shown,
         )]
     return []

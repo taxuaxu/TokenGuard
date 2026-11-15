@@ -10,6 +10,9 @@ rules the proposal highlights:
      binding / no confused-deputy).
   4. A token correctly bound to this resource is accepted.
   5. An expired token is rejected.
+  6. The server does not pass the client's token through to upstream services
+     (a downstream call must use a token minted for the upstream, not the
+     client's token bound to this resource).
 
 Only localhost targets are allowed.
 """
@@ -173,8 +176,34 @@ def run_mcp_probe(target: str = "http://127.0.0.1:7000", client=None) -> List[MC
             f"{'ACCEPTED (wrong)' if accepted else 'rejected'}",
             vulnerability="EXPIRY_NOT_ENFORCED" if accepted else None,
         ))
+    else:
+        results.append(MCPProbeResult("EXPIRED_REJECTED", False,
+                                      "could not mint expired token"))
+
+    # 6. The server must not pass the client's token through to upstream services
+    #    (RFC 9728 / confused-deputy): a downstream call must use a token minted
+    #    for the upstream, not the client's token bound to this resource.
+    status, _, body = call_initialize_method(client, mcp_url, good, "upstream/call") \
+        if good else (None, None, {})
+    res = body.get("result") if isinstance(body, dict) else None
+    if res and "forwarded_aud" in res:
+        passed_through = res.get("forwarded_aud") == resource_uri
+        results.append(MCPProbeResult(
+            "TOKEN_PASSTHROUGH", not passed_through,
+            f"upstream received aud={res.get('forwarded_aud')!r} "
+            f"(upstream resource={res.get('upstream_resource')!r})",
+            vulnerability="TOKEN_PASSED_THROUGH" if passed_through else None,
+        ))
+    else:
+        results.append(MCPProbeResult("TOKEN_PASSTHROUGH", True,
+                                      "server does not expose an upstream call (n/a)"))
 
     return results
+
+
+def call_initialize_method(client, mcp_url, token, method):
+    return client.post(mcp_url, token=token,
+                       json={"jsonrpc": "2.0", "id": 3, "method": method})
 
 
 def vulnerabilities(results: List[MCPProbeResult]) -> List[str]:

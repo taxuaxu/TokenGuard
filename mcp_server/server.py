@@ -28,7 +28,8 @@ STRONG_SECRET = "mcp$Lab!Shared9Secret#Between_AS_and_RS-2026-xyz"  # 48 chars (
 TOKEN_TTL = 900
 
 
-def create_app(enforce_audience: bool = True, issuer_base: str = "http://127.0.0.1:7000"):
+def create_app(enforce_audience: bool = True, issuer_base: str = "http://127.0.0.1:7000",
+               forward_client_token: bool = False):
     app = Flask(__name__)
     issuer_base = issuer_base.rstrip("/")
     # The AS issuer identifier is the base URL (no path), so its metadata lives at
@@ -37,10 +38,18 @@ def create_app(enforce_audience: bool = True, issuer_base: str = "http://127.0.0
     as_issuer = issuer_base
     token_endpoint = f"{issuer_base}/as/token"
     resource_uri = f"{issuer_base}/mcp"          # this server's canonical resource id
+    upstream_uri = f"{issuer_base}/upstream"     # a mock downstream service
     prm_url = f"{issuer_base}/.well-known/oauth-protected-resource"
 
     app.config.update(enforce_audience=enforce_audience, issuer_base=issuer_base,
-                      as_issuer=as_issuer, resource_uri=resource_uri)
+                      as_issuer=as_issuer, resource_uri=resource_uri,
+                      forward_client_token=forward_client_token, upstream_uri=upstream_uri)
+
+    def _mint_upstream():
+        """Proper token exchange: a token minted for the UPSTREAM resource."""
+        now = int(time.time())
+        return jwt.encode({"iss": as_issuer, "aud": upstream_uri, "sub": "mcp-server",
+                           "iat": now, "exp": now + TOKEN_TTL}, STRONG_SECRET, algorithm="HS256")
 
     # ---------------- Authorization Server (lab issuer) ----------------
 
@@ -138,6 +147,20 @@ def create_app(enforce_audience: bool = True, issuer_base: str = "http://127.0.0
             params = body.get("params", {})
             text = params.get("arguments", {}).get("text", "")
             result = {"content": [{"type": "text", "text": f"echo: {text}"}]}
+        elif method == "upstream/call":
+            # Call a mock downstream service. A secure server uses its OWN token
+            # (minted for the upstream); a misconfigured one passes the client's
+            # token straight through (token pass-through / confused deputy).
+            auth = request.headers.get("Authorization", "")
+            client_token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+            forwarded = client_token if app.config["forward_client_token"] else _mint_upstream()
+            try:
+                fa = jwt.decode(forwarded, STRONG_SECRET, algorithms=["HS256"],
+                                options={"verify_aud": False, "verify_exp": False,
+                                         "verify_iss": False}).get("aud")
+            except jwt.PyJWTError:
+                fa = None
+            result = {"upstream_resource": upstream_uri, "forwarded_aud": fa}
         else:
             return jsonify({"jsonrpc": "2.0", "id": req_id,
                             "error": {"code": -32601, "message": f"method not found: {method}"}})
@@ -163,16 +186,27 @@ def main():
     warnings.filterwarnings("ignore")
     ap = argparse.ArgumentParser(description="Local OAuth 2.1 MCP lab server")
     ap.add_argument("--insecure", action="store_true",
-                    help="run the misconfigured variant (no audience validation)")
+                    help="run the misconfigured variant (no audience validation + "
+                         "token pass-through)")
+    ap.add_argument("--passthrough", action="store_true",
+                    help="forward the client's token to upstream services (token "
+                         "pass-through flaw), with audience validation still on")
     ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
 
     enforce = not args.insecure
-    port = args.port if args.port is not None else (7000 if enforce else 7001)
+    forward = args.insecure or args.passthrough
+    port = args.port if args.port is not None else (7000 if enforce and not forward else 7001)
     issuer_base = f"http://{args.host}:{port}"
-    app = create_app(enforce_audience=enforce, issuer_base=issuer_base)
-    mode = "SECURE (audience enforced)" if enforce else "MISCONFIGURED (no audience check)"
+    app = create_app(enforce_audience=enforce, issuer_base=issuer_base,
+                     forward_client_token=forward)
+    flaws = []
+    if not enforce:
+        flaws.append("no audience check")
+    if forward:
+        flaws.append("token pass-through")
+    mode = "SECURE" if not flaws else "MISCONFIGURED (" + ", ".join(flaws) + ")"
     print(f"[mcp-lab] {mode} on {issuer_base}")
     app.run(host=args.host, port=port, debug=False)
 

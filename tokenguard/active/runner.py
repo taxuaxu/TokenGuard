@@ -129,11 +129,21 @@ def run_active_tests(target: str = "http://127.0.0.1:5000", secret: Optional[str
 
 
 def summarize(results: List[ActiveResult]) -> Dict[str, List[str]]:
-    """endpoint -> list of detected flaws"""
+    """endpoint -> list of detected flaws.
+
+    If an endpoint's valid baseline token was itself rejected, every attack
+    looks 'rejected' regardless of the real behavior, so the endpoint is marked
+    ['INCONCLUSIVE'] rather than reported as flaw-free (avoids a false negative).
+    """
+    inconclusive = {r.endpoint for r in results
+                    if r.attack == "BASELINE_VALID" and r.expected_accept and not r.accepted}
     summary: Dict[str, List[str]] = {}
     for r in results:
         summary.setdefault(r.endpoint, [])
-        if r.flaw:
+    for ep in inconclusive:
+        summary[ep] = ["INCONCLUSIVE"]
+    for r in results:
+        if r.endpoint not in inconclusive and r.flaw:
             summary[r.endpoint].append(r.flaw)
     return summary
 

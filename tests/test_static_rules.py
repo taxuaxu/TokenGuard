@@ -204,3 +204,28 @@ def test_duplicate_keys_in_header_flagged():
 
 def test_clean_token_has_no_duplicate_keys():
     assert "DUPLICATE_KEYS" not in ids(make())
+
+
+# ---------- nested sensitive data, x5c, empty secret ----------
+
+def test_nested_sensitive_data_detected():
+    tok = make({"sub": "a", "iat": NOW - 60, "exp": NOW + 900, "iss": "i",
+                "aud": "api.local", "profile": {"password": "hunter2"}}, secret=STRONG)
+    assert "SENSITIVE_DATA" in ids(tok)
+
+
+def test_x5c_header_flagged():
+    tok = make(secret=STRONG, headers={"x5c": ["MIIBcert=="]})
+    assert "HEADER_X5C" in ids(tok)
+
+
+def test_empty_secret_recovered():
+    # PyJWT refuses to sign with an empty key, so craft the token by hand.
+    import base64
+    import hashlib
+    import hmac
+    h = b64url_encode(b'{"alg":"HS256","typ":"JWT"}')
+    p = b64url_encode(b'{"sub":"x"}')
+    sig = base64.urlsafe_b64encode(
+        hmac.new(b"", f"{h}.{p}".encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
+    assert "WEAK_KEY" in ids(f"{h}.{p}.{sig}")

@@ -84,6 +84,12 @@ def check_key_injection_headers(t: ParsedToken, cfg: AnalysisConfig) -> List[Fin
             "The token supplies its own verification key. If the server trusts it, an attacker "
             "can sign tokens with a key they generated.",
         ))
+    if "x5c" in h:
+        out.append(Finding(
+            "HEADER_X5C", "Embedded certificate chain (x5c)", "header", Severity.HIGH,
+            "The token embeds its own X.509 certificate chain. If the server verifies with the "
+            "embedded chain instead of a trusted key, an attacker can supply a self-signed one.",
+        ))
     for name in ("jku", "x5u"):
         if name in h:
             out.append(Finding(

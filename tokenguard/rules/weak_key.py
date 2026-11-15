@@ -40,7 +40,9 @@ def check_weak_hmac_key(t: ParsedToken, cfg: AnalysisConfig) -> List[Finding]:
     # before the set membership test; such tokens are flagged elsewhere.
     if not isinstance(t.alg, str) or t.alg not in HMAC_ALGS:
         return []
-    candidates = list(cfg.extra_secrets) + list(load_wordlist(str(cfg.wordlist_path)))
+    # Include the empty secret: some servers are (mis)configured with no key at all,
+    # and load_wordlist drops blank lines so it would otherwise never be tried.
+    candidates = list(cfg.extra_secrets) + [""] + list(load_wordlist(str(cfg.wordlist_path)))
     secret = crack_hmac(t, candidates)
     if secret is None:
         return []

@@ -53,3 +53,20 @@ def test_remote_host_is_refused():
     from tokenguard.active.runner import HttpClient
     with pytest.raises(ValueError):
         HttpClient("http://example.com")
+
+
+def test_summarize_marks_inconclusive_on_rejected_baseline():
+    from tokenguard.active.runner import ActiveResult, summarize
+    results = [
+        ActiveResult("/api/x", "BASELINE_VALID", 401, False, True, "rejected"),
+        ActiveResult("/api/x", "ALG_NONE", 401, False, False),
+    ]
+    assert summarize(results)["/api/x"] == ["INCONCLUSIVE"]
+
+
+def test_active_scoring_matches_ground_truth(vuln):
+    from evaluation.evaluate import score_active
+    detected = summarize(run_active_tests(client=FlaskClient(vuln.app)))
+    s = score_active(detected, vuln.ENDPOINTS)
+    assert s["precision"] == 1.0 and s["recall"] == 1.0
+    assert s["fp"] == 0 and s["fn"] == 0
