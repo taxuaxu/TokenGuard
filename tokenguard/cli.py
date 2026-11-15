@@ -56,6 +56,16 @@ def _cmd_active(args) -> int:
     return 1 if any(r.vulnerable for r in results) else 0
 
 
+def _cmd_mcp(args) -> int:
+    from .mcp_probe import format_results, run_mcp_probe, vulnerabilities
+    results = run_mcp_probe(args.target)
+    if args.json:
+        print(json.dumps([r.to_dict() for r in results], indent=2))
+    else:
+        print(format_results(results))
+    return 1 if vulnerabilities(results) else 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="tokenguard", description="JWT security analysis tool")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -75,6 +85,11 @@ def main(argv=None) -> int:
                    help="known/recovered HMAC secret used to sign attack tokens")
     t.add_argument("--json", action="store_true")
     t.set_defaults(func=_cmd_active)
+
+    m = sub.add_parser("mcp", help="probe a local OAuth 2.1 MCP server (case study)")
+    m.add_argument("--target", default="http://127.0.0.1:7000")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=_cmd_mcp)
 
     args = ap.parse_args(argv)
     return args.func(args)

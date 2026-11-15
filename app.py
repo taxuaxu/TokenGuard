@@ -22,7 +22,8 @@ st.set_page_config(page_title="TokenGuard", page_icon="🛡️", layout="wide")
 st.title("🛡️ TokenGuard — JWT Security Analysis")
 st.caption("Decodes and inspects a JWT without trusting its signature. For local/lab use.")
 
-tab_static, tab_active = st.tabs(["Static analysis", "Active server test"])
+tab_static, tab_active, tab_mcp = st.tabs(
+    ["Static analysis", "Active server test", "MCP case study"])
 
 with tab_static:
     with st.sidebar:
@@ -97,3 +98,27 @@ with tab_active:
             st.subheader("Detected flaws per endpoint")
             for ep, flaws in summarize(results).items():
                 st.write(f"**{ep}** → {', '.join(flaws) if flaws else '_no flaws detected_'}")
+
+with tab_mcp:
+    st.subheader("OAuth 2.1 MCP server case study")
+    st.caption("Checks an MCP resource server's authorization rules: the 401 challenge, "
+               "protected-resource metadata, audience binding, and expiry. Start a lab "
+               "server with `python mcp_server/server.py` (add `--insecure` for the "
+               "misconfigured variant on :7001).")
+    mcp_target = st.text_input("MCP server (localhost only)", "http://127.0.0.1:7000")
+    if st.button("Run MCP probe"):
+        from tokenguard.mcp_probe import run_mcp_probe, vulnerabilities
+        try:
+            results = run_mcp_probe(mcp_target)
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"{type(exc).__name__}: {exc}")
+        else:
+            rows = [{"check": r.check, "passed": r.passed,
+                     "vulnerability": r.vulnerability or "", "detail": r.detail}
+                    for r in results]
+            st.dataframe(rows, use_container_width=True)
+            vulns = vulnerabilities(results)
+            if vulns:
+                st.error("Vulnerabilities: " + ", ".join(vulns))
+            else:
+                st.success("No authorization vulnerabilities detected.")
