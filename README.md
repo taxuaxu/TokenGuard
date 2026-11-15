@@ -64,7 +64,7 @@ python evaluation/evaluate.py
 #   pip install termcolor pycryptodomex requests ratelimit   # jwt_tool's deps
 python evaluation/evaluate.py --jwt-tool /path/to/jwt_tool.py   # or set JWT_TOOL
 
-# Web UI
+# Web UI (control panel: start/stop servers, run tests, charts, matrix)
 streamlit run app.py
 
 # Tests
@@ -80,7 +80,7 @@ mcp_server/server.py local OAuth 2.1 MCP server (secure + misconfigured variants
 dataset/generate.py labeled secure/insecure tokens (PyJWT)
 evaluation/evaluate.py precision / recall / F1 / FP across 3 configs
 evaluation/baselines.py jwt_tool adapter (runs it, maps output to our labels)
-app.py             Streamlit UI (static + active tabs)
+app.py             Streamlit control panel (server control, static, active matrix, MCP, evaluation)
 wordlists/         common-secrets wordlist for weak-key detection
 tests/             pytest suite (static rules + active mode)
 ```
