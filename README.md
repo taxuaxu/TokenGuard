@@ -22,6 +22,12 @@ Each finding has a severity (INFO→CRITICAL), an explanation, and masked eviden
 audience, weak-key forgery) to a deliberately misconfigured local server and records which
 attacks are accepted. The target host must be `127.0.0.1`/`localhost`.
 
+**MCP case study** — probes a local, OAuth 2.1-protected MCP (Model Context Protocol)
+server following the MCP authorization spec (OAuth 2.1 + RFC 9728): the 401 challenge,
+protected-resource metadata discovery, **audience binding** (a token minted for another
+resource must be rejected — the confused-deputy rule), and expiry. Ships a secure variant
+and a misconfigured one that skips audience validation.
+
 **Evaluation** — a labeled dataset and three detection configurations (basic / basic+weak /
 all) scored with precision, recall, F1, and false-positive counts.
 
@@ -44,6 +50,11 @@ python -m tokenguard analyze "<jwt>" --groups algorithm claims --json
 python vuln_server/app.py
 python -m tokenguard active --target http://127.0.0.1:5000
 
+# MCP case study (run a lab MCP server in another terminal first)
+python mcp_server/server.py                 # secure,        :7000
+python mcp_server/server.py --insecure      # misconfigured, :7001
+python -m tokenguard mcp --target http://127.0.0.1:7000
+
 # Evaluation
 python dataset/generate.py
 python evaluation/evaluate.py
@@ -58,8 +69,9 @@ pytest
 ## Layout
 
 ```
-tokenguard/        package: parser, models, config, rules/, active/, cli
+tokenguard/        package: parser, models, config, rules/, active/, mcp_probe, cli
 vuln_server/app.py deliberately misconfigured Flask server + tiny token issuer
+mcp_server/server.py local OAuth 2.1 MCP server (secure + misconfigured variants)
 dataset/generate.py labeled secure/insecure tokens (PyJWT)
 evaluation/evaluate.py precision / recall / F1 / FP across 3 configs
 app.py             Streamlit UI (static + active tabs)
@@ -69,6 +81,6 @@ tests/             pytest suite (static rules + active mode)
 
 ## Status
 
-Static analysis, active testing against the local lab server, labeled dataset, and
-evaluation are implemented with a passing test suite. The OAuth 2.1 MCP case study and the
-`jwt_tool` baseline comparison are the remaining milestones.
+Static analysis, active testing against the local lab server, the OAuth 2.1 MCP case
+study, the labeled dataset, and evaluation are implemented with a passing test suite
+(`pytest`). The `jwt_tool` baseline comparison is the remaining milestone.
