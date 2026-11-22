@@ -103,13 +103,20 @@ tests/             pytest suite (static rules, active mode, dataset integrity)
 
 ## Results
 
-On the 146-token labeled dataset, `basic` checks reach recall 0.78 (they miss the weak-key
+On the 148-token labeled dataset, `basic` checks reach recall 0.78 (they miss the weak-key
 labels); adding weak-key detection brings `all` to precision/recall/F1 = 1.0 with no false
-positives, including on the intentionally short-lived, boundary, and legitimate asymmetric
-secure tokens. On the shared checks
-(`alg=none`, expired, weak key), TokenGuard matches the `jwt_tool` baseline (both 1.0),
-while also covering claim-level issues (`aud`/`iss`/lifetime/sensitive data) that
-jwt_tool does not flag.
+positives. Because this dataset is derived from TokenGuard's own rule definitions, that
+perfect score reflects coverage and internal consistency rather than generalization. On the
+checks shared with `jwt_tool` (`alg=none`, expired, weak key), TokenGuard matches the
+baseline (1.0 vs. 0.98, one jwt_tool false positive) while also covering claim-level issues
+(`aud`/`iss`/lifetime/sensitive data) that jwt_tool does not flag.
+
+For a more honest measure, a separate **hand-labeled hard set** of 15 adversarial cases —
+written independently of the rules, with legitimate-but-suspicious tokens such as a
+clock-skew `nbf`, a long-lived refresh token, and a `kid` containing `--` — scores
+precision 0.63 and recall 1.0: the tool catches every real issue but conservatively
+over-flags three legitimate tokens, each pointing to a concrete refinement. This lower,
+more informative number is the better reflection of real-world behavior.
 
 ## Status
 
