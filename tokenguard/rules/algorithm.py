@@ -71,8 +71,10 @@ def check_signature_present(t: ParsedToken, cfg: AnalysisConfig) -> List[Finding
     return []
 
 
-# path traversal, quotes, SQL comment/boolean, pipes, null bytes
-_SUSPICIOUS_KID = re.compile(r"(\.\./|\.\.\\|['\";|]| or |--|\x00)", re.IGNORECASE)
+# path traversal, quotes, SQL boolean, pipes, null bytes. A bare "--" is NOT
+# flagged: it is a legal base64url separator and flagging it over-reports (a real
+# SQL-comment injection also carries a quote or boolean, which is still caught).
+_SUSPICIOUS_KID = re.compile(r"(\.\./|\.\.\\|['\";|]| or |\x00)", re.IGNORECASE)
 
 
 def check_key_injection_headers(t: ParsedToken, cfg: AnalysisConfig) -> List[Finding]:

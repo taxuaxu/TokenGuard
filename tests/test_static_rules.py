@@ -126,8 +126,14 @@ def test_sensitive_data_is_masked():
 
 
 def test_info_nbf_future():
-    tok = make({"iss": "i", "aud": "a", "iat": NOW, "nbf": NOW + 100, "exp": NOW + 600})
+    # Beyond the clock-skew leeway; a near-future nbf (< leeway) is tolerated.
+    tok = make({"iss": "i", "aud": "a", "iat": NOW, "nbf": NOW + 3600, "exp": NOW + 7200})
     assert "NOT_YET_VALID" in ids(tok)
+
+
+def test_nbf_within_leeway_not_flagged():
+    tok = make({"iss": "i", "aud": "a", "iat": NOW, "nbf": NOW + 60, "exp": NOW + 600})
+    assert "NOT_YET_VALID" not in ids(tok)
 
 
 # ---------- weak key ----------
@@ -229,3 +235,41 @@ def test_empty_secret_recovered():
     sig = base64.urlsafe_b64encode(
         hmac.new(b"", f"{h}.{p}".encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
     assert "WEAK_KEY" in ids(f"{h}.{p}.{sig}")
+
+
+# ---------- improvements: leeway, lifetime context, kid, value-based sensitive ----------
+
+def test_expired_within_leeway_not_flagged():
+    assert "EXPIRED" not in ids(make({"iss": "i", "aud": "a", "iat": NOW - 1200, "exp": NOW - 30}))
+
+
+def test_expired_beyond_leeway_flagged():
+    assert "EXPIRED" in ids(make({"iss": "i", "aud": "a", "iat": NOW - 1200, "exp": NOW - 300}))
+
+
+def test_refresh_token_not_flagged_long_lifetime():
+    tok = make({"iss": "i", "aud": "a", "iat": NOW, "exp": NOW + 30 * 86400,
+                "scope": "offline_access"})
+    assert "LONG_LIFETIME" not in ids(tok)
+
+
+def test_long_lived_access_token_still_flagged():
+    assert "LONG_LIFETIME" in ids(make({"iss": "i", "aud": "a", "iat": NOW, "exp": NOW + 365 * 86400}))
+
+
+def test_kid_double_hyphen_not_flagged():
+    assert "HEADER_KID_INJECTION" not in ids(make(headers={"kid": "Ab3--Xy9"}))
+
+
+def test_kid_sql_quote_still_flagged():
+    assert "HEADER_KID_INJECTION" in ids(make(headers={"kid": "x' OR '1'='1"}))
+
+
+def test_sensitive_detected_by_value_pattern_ssn():
+    tok = make({"iss": "i", "aud": "a", "iat": NOW, "exp": NOW + 600, "ref": "123-45-6789"})
+    assert "SENSITIVE_DATA" in ids(tok)
+
+
+def test_sensitive_detected_under_newly_known_key():
+    tok = make({"iss": "i", "aud": "a", "iat": NOW, "exp": NOW + 600, "cvv": "123"})
+    assert "SENSITIVE_DATA" in ids(tok)
