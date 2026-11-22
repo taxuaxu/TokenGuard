@@ -111,12 +111,13 @@ checks shared with `jwt_tool` (`alg=none`, expired, weak key), TokenGuard matche
 baseline (1.0 vs. 0.98, one jwt_tool false positive) while also covering claim-level issues
 (`aud`/`iss`/lifetime/sensitive data) that jwt_tool does not flag.
 
-For a more honest measure, a separate **hand-labeled hard set** of 15 adversarial cases —
-written independently of the rules, with legitimate-but-suspicious tokens such as a
-clock-skew `nbf`, a long-lived refresh token, and a `kid` containing `--` — scores
-precision 0.63 and recall 1.0: the tool catches every real issue but conservatively
-over-flags three legitimate tokens, each pointing to a concrete refinement. This lower,
-more informative number is the better reflection of real-world behavior.
+For a more honest measure, a separate **hand-labeled hard set** of 59 adversarial cases —
+written independently of the rules — scores precision 0.68 and recall 0.88. The tool
+conservatively over-flags ten legitimate tokens, concentrated in three root causes
+(clock-skew `nbf` values, long-lived refresh tokens, and key ids containing `--`), and
+misses three genuinely sensitive values (an SSN, a CVV, an IBAN) stored under field names
+its keyword list does not know. Each gap points to a concrete refinement, and this lower,
+more informative result better reflects real-world behavior.
 
 ## Status
 
