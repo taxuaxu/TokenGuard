@@ -192,6 +192,29 @@ def main(argv=None):
         print("\n[baseline] jwt_tool not provided; skipping head-to-head.")
         print("           Enable with:  python evaluation/evaluate.py --jwt-tool /path/to/jwt_tool.py")
 
+    # -------- hand-labeled hard / adversarial set (independent of the generator) --------
+    try:
+        from dataset.hard_cases import records as hard_records
+        hard = hard_records()
+        hpos = sum(1 for r in hard if r["labels"])
+        hs = score(hard, lambda rec: tokenguard_ids(rec, ALL_GROUPS), LABELED)
+        results["_hard"] = hs
+        print(f"\nHand-labeled hard set ({len(hard)} cases: {hpos} insecure, "
+              f"{len(hard) - hpos} legitimate-but-suspicious; not derived from the rules):")
+        print(f"{'':<14}{'precision':>11}{'recall':>9}{'F1':>8}{'FP':>5}{'FN':>5}")
+        print("-" * 52)
+        _print_row("hard", hs)
+        if hs["false_positives"]:
+            print("  False positives (a legitimate token was flagged):")
+            for note, ids in hs["false_positives"]:
+                print(f"    - {note}: {ids}")
+        if hs["false_negatives"]:
+            print("  False negatives (a real issue was missed):")
+            for note, ids in hs["false_negatives"]:
+                print(f"    - {note}: {ids}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\n[hard] could not score the hard set: {exc}")
+
     # -------- optional active-mode detection accuracy --------
     if args.active_target:
         from tokenguard.active.runner import HttpClient, run_active_tests, summarize

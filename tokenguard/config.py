@@ -11,6 +11,7 @@ DEFAULT_WORDLIST = Path(__file__).resolve().parent.parent / "wordlists" / "commo
 @dataclass
 class AnalysisConfig:
     now: Optional[float] = None                 # unix time; None = current time
+    leeway_seconds: int = 120                   # clock-skew tolerance for exp/nbf
     max_lifetime_seconds: int = 24 * 3600       # longer than this -> LONG_LIFETIME
     expected_algs: Optional[List[str]] = None   # if set, anything else -> ALG_UNEXPECTED
     wordlist_path: Path = DEFAULT_WORDLIST

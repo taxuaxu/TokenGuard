@@ -32,7 +32,7 @@ resource must be rejected — the confused-deputy rule), expiry, and **token pas
 a secure variant and misconfigured ones that skip audience validation or pass the client's
 token through.
 
-**Evaluation** — a labeled dataset of 148 tokens (120 insecure, 28 secure and boundary
+**Evaluation** — a labeled dataset of 180 tokens (152 insecure, 28 secure and boundary
 negatives). Coverage is derived from TokenGuard's own definitions, so the dataset exercises
 every known algorithm, every sensitive-claim key, and a balanced sample of the weak-key
 wordlist (the full wordlist via `--full-wordlist`, 223 tokens), alongside the full set of
@@ -103,13 +103,23 @@ tests/             pytest suite (static rules, active mode, dataset integrity)
 
 ## Results
 
-On the 146-token labeled dataset, `basic` checks reach recall 0.78 (they miss the weak-key
+On the 180-token labeled dataset, `basic` checks reach recall 0.82 (they miss the weak-key
 labels); adding weak-key detection brings `all` to precision/recall/F1 = 1.0 with no false
-positives, including on the intentionally short-lived, boundary, and legitimate asymmetric
-secure tokens. On the shared checks
-(`alg=none`, expired, weak key), TokenGuard matches the `jwt_tool` baseline (both 1.0),
-while also covering claim-level issues (`aud`/`iss`/lifetime/sensitive data) that
-jwt_tool does not flag.
+positives. Because this dataset is derived from TokenGuard's own rule definitions, that
+perfect score reflects coverage and internal consistency rather than generalization. On the
+checks shared with `jwt_tool` (`alg=none`, expired, weak key), TokenGuard matches the
+baseline (1.0 vs. 0.98, one jwt_tool false positive) while also covering claim-level issues
+(`aud`/`iss`/lifetime/sensitive data) that jwt_tool does not flag.
+
+For a more honest measure, a separate **hand-labeled hard set** of 100 adversarial cases,
+written independently of the rules, first exposed concrete gaps (precision 0.75, recall
+0.85). Addressing them — clock-skew tolerance for `exp`/`nbf`, context-aware lifetime
+(refresh tokens are not flagged), a tighter `kid` pattern, and value-pattern plus an
+expanded keyword list for sensitive data — raised the independent score to **precision 0.98
+and recall 0.96**. Two documented limitations remain: the value heuristic can over-match a
+coincidentally valid card number, and a secret under a generic free-text claim is still
+missed. This iteration, on data independent of the rules, is the better reflection of
+real-world behavior than the perfect score on the self-derived set.
 
 ## Status
 

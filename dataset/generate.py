@@ -224,7 +224,7 @@ def records(weak_sample=15):
         ("../../../../dev/null", "kid unix path traversal"),
         ("..\\..\\windows\\win.ini", "kid windows path traversal"),
         ("key1' OR '1'='1", "kid SQL injection"),
-        ("a--b", "kid SQL comment"),
+        ("admin'--", "kid SQL comment with quote"),
         ("default|whoami", "kid command injection"),
         ("n\x00ull", "kid null byte"),
     ]:
@@ -244,8 +244,8 @@ def records(weak_sample=15):
         add(_manual_hs256(hs_hdr, secure_claims(exp=bad)), ["INVALID_EXP"], note)
     # expired
     add(_signed(expired_claims()), ["EXPIRED"], "expired 1h ago")
-    add(_signed(secure_claims(iat=NOW - 960, nbf=NOW - 960, exp=NOW - 60)),
-        ["EXPIRED"], "expired 1m ago (fresh, 15m lifetime)")
+    add(_signed(secure_claims(iat=NOW - 1200, nbf=NOW - 1200, exp=NOW - 300)),
+        ["EXPIRED"], "expired 5m ago (beyond clock-skew leeway)")
     add(_signed(secure_claims(iat=NOW - 10 * 86400, nbf=NOW - 10 * 86400,
                               exp=NOW - 9 * 86400)), ["EXPIRED"], "expired 9 days ago")
     # excessive lifetime
